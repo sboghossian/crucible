@@ -372,6 +372,182 @@ class SQLiteMemoryStore:
         ]
 
     # ------------------------------------------------------------------ #
+    # Replay — sessions and events                                        #
+    # ------------------------------------------------------------------ #
+
+    def save_debate_session(
+        self,
+        session_id: str,
+        topic: str,
+        context: str,
+        options: list[Any],
+        personas: list[str],
+        parent_debate_id: str | None = None,
+        branch_round: int | None = None,
+        new_prompt: str | None = None,
+    ) -> None:
+        with self._lock:
+            conn = self._get_conn()
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO debate_sessions
+                    (id, topic, context, options_json, personas_json,
+                     parent_debate_id, branch_round, new_prompt)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id, topic, context,
+                    json.dumps(options), json.dumps(personas),
+                    parent_debate_id, branch_round, new_prompt,
+                ),
+            )
+            conn.commit()
+
+    def mark_debate_session_complete(self, session_id: str, total_events: int) -> None:
+        with self._lock:
+            conn = self._get_conn()
+            conn.execute(
+                "UPDATE debate_sessions SET completed=1, total_events=? WHERE id=?",
+                (total_events, session_id),
+            )
+            conn.commit()
+
+    def get_debate_session(self, session_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            conn = self._get_conn()
+            row = conn.execute(
+                "SELECT * FROM debate_sessions WHERE id=?", (session_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "topic": row["topic"],
+            "context": row["context"],
+            "options": json.loads(row["options_json"]),
+            "personas": json.loads(row["personas_json"]),
+            "parent_debate_id": row["parent_debate_id"],
+            "branch_round": row["branch_round"],
+            "new_prompt": row["new_prompt"],
+            "total_events": row["total_events"],
+            "completed": bool(row["completed"]),
+            "created_at": row["created_at"],
+        }
+
+    def save_debate_event(
+        self,
+        debate_id: str,
+        seq: int,
+        round_number: int,
+        persona: str,
+        event_kind: str,
+        event_json: str,
+        elapsed_ms: int,
+    ) -> None:
+        with self._lock:
+            conn = self._get_conn()
+            conn.execute(
+                """
+                INSERT INTO debate_events
+                    (debate_id, seq, round_number, persona, event_kind, event_json, elapsed_ms)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (debate_id, seq, round_number, persona, event_kind, event_json, elapsed_ms),
+            )
+            conn.commit()
+
+    def get_debate_events(
+        self,
+        debate_id: str,
+        from_round: int | None = None,
+        max_round: int | None = None,
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            conn = self._get_conn()
+            query = "SELECT * FROM debate_events WHERE debate_id=?"
+            params: list[Any] = [debate_id]
+            if from_round is not None:
+                query += " AND (round_number >= ? OR round_number = 0)"
+                params.append(from_round)
+            if max_round is not None:
+                query += " AND round_number <= ?"
+                params.append(max_round)
+            query += " ORDER BY seq"
+            rows = conn.execute(query, params).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "debate_id": r["debate_id"],
+                "seq": r["seq"],
+                "round_number": r["round_number"],
+                "persona": r["persona"],
+                "event_kind": r["event_kind"],
+                "event_json": r["event_json"],
+                "elapsed_ms": r["elapsed_ms"],
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
+
+    def list_debate_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._lock:
+            conn = self._get_conn()
+            rows = conn.execute(
+                """
+                SELECT id, topic, context, options_json, personas_json,
+                       parent_debate_id, branch_round, total_events, completed, created_at
+                FROM debate_sessions
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "topic": r["topic"],
+                "context": r["context"],
+                "options": json.loads(r["options_json"]),
+                "personas": json.loads(r["personas_json"]),
+                "parent_debate_id": r["parent_debate_id"],
+                "branch_round": r["branch_round"],
+                "total_events": r["total_events"],
+                "completed": bool(r["completed"]),
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
+
+    def get_branch_tree(self, root_debate_id: str) -> dict[str, list[dict[str, Any]]]:
+        """Return mapping of debate_id -> list of direct child branches (BFS)."""
+        with self._lock:
+            conn = self._get_conn()
+            result: dict[str, list[dict[str, Any]]] = {}
+            queue = [root_debate_id]
+            visited: set[str] = set()
+            while queue:
+                current_id = queue.pop(0)
+                if current_id in visited:
+                    continue
+                visited.add(current_id)
+                rows = conn.execute(
+                    "SELECT id, topic, branch_round, created_at FROM debate_sessions WHERE parent_debate_id=?",
+                    (current_id,),
+                ).fetchall()
+                children = [
+                    {
+                        "id": r["id"],
+                        "topic": r["topic"],
+                        "branch_round": r["branch_round"],
+                        "created_at": r["created_at"],
+                    }
+                    for r in rows
+                ]
+                result[current_id] = children
+                queue.extend(c["id"] for c in children)
+        return result
+
+    # ------------------------------------------------------------------ #
     # Export / Import                                                      #
     # ------------------------------------------------------------------ #
 
