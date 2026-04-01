@@ -42,6 +42,9 @@ class Template:
     expected_outputs: list[str]
     tags: list[str] = field(default_factory=list)
     version: str = "1.0.0"
+    author: str = ""
+    license: str = "MIT"
+    tested_with_crucible_version: str = ""
 
 
 def template(t: Template) -> Template:
@@ -107,6 +110,9 @@ class TemplateSession:
             "template": self.template.name,
             "category": self.template.category,
             "description": self.template.description,
+            "version": self.template.version,
+            "author": self.template.author,
+            "license": self.template.license,
             "agents": [
                 {"name": s.name, "role": s.role}
                 for s in self.template.agents
