@@ -92,35 +92,26 @@ Examples:
         help="Search templates by keyword"
     )
 
-    # pipelines subcommand — list pre-built pipelines
-    subparsers.add_parser("pipelines", help="List pre-built pipelines")
-
-    # pipeline subcommand — run a pre-built pipeline
-    pipeline_parser = subparsers.add_parser("pipeline", help="Run a pre-built pipeline")
-    pipeline_parser.add_argument("pipeline_name", help="Name of the pipeline to run")
-    pipeline_parser.add_argument(
-        "--subject", "-s", default="",
-        help="Subject for the pipeline"
+    # history subcommand
+    history_parser = subparsers.add_parser("history", help="Show debate history")
+    history_parser.add_argument(
+        "--limit", "-n", type=int, default=20,
+        help="Number of debates to show (default: 20)"
     )
-    pipeline_parser.add_argument(
-        "--plan", action="store_true",
-        help="Show pipeline stages without running (no API key needed)"
+    history_parser.add_argument(
+        "--db", default=".crucible_memory.db",
+        help="Path to the SQLite memory database"
     )
 
-    # compose subcommand — ad-hoc pipeline from template names
-    compose_parser = subparsers.add_parser(
-        "compose", help="Create and run an ad-hoc pipeline from templates"
+    # stats subcommand
+    stats_parser = subparsers.add_parser("stats", help="Show memory store statistics")
+    stats_parser.add_argument(
+        "--agent", "-a", default="",
+        help="Show performance stats for a specific agent"
     )
-    compose_parser.add_argument(
-        "templates", nargs="+", help="Template names in execution order"
-    )
-    compose_parser.add_argument(
-        "--subject", "-s", default="",
-        help="Subject for the pipeline"
-    )
-    compose_parser.add_argument(
-        "--debate-gates", "-d", action="store_true",
-        help="Add a Debate Council gate between every stage"
+    stats_parser.add_argument(
+        "--db", default=".crucible_memory.db",
+        help="Path to the SQLite memory database"
     )
 
     # deploy subcommand
@@ -143,9 +134,9 @@ Examples:
         parser.print_help()
         sys.exit(0)
 
-    # templates, pipelines and plan-mode don't need an API key
-    needs_api_key = args.command not in ("templates", "pipelines") and not (
-        args.command in ("deploy", "pipeline") and getattr(args, "plan", False)
+    # templates, history, and stats don't need an API key
+    needs_api_key = args.command not in ("templates", "history", "stats") and not (
+        args.command == "deploy" and getattr(args, "plan", False)
     )
 
     if needs_api_key and not args.api_key:
@@ -167,16 +158,12 @@ async def _run(args: Any) -> None:
         _cmd_templates(args)
         return
 
-    if args.command == "pipelines":
-        _cmd_pipelines(args)
+    if args.command == "history":
+        _cmd_history(args)
         return
 
-    if args.command == "pipeline":
-        await _cmd_pipeline(args)
-        return
-
-    if args.command == "compose":
-        await _cmd_compose(args)
+    if args.command == "stats":
+        _cmd_stats(args)
         return
 
     if args.command == "deploy":
@@ -421,96 +408,88 @@ async def _cmd_deploy(args: Any) -> None:
     ))
 
 
-def _cmd_pipelines(_args: Any) -> None:
-    from .templates.pipelines import list_pipelines
+def _cmd_history(args: Any) -> None:
+    from .memory.sqlite_store import SQLiteMemoryStore
 
-    pipelines = list_pipelines()
-    console.print()
-    console.print(Panel(
-        f"[bold cyan]Pre-built Pipelines[/bold cyan]\n"
-        f"[dim]{len(pipelines)} pipeline(s) available[/dim]",
-        title="Crucible",
-    ))
+    store = SQLiteMemoryStore(db_path=args.db)
+    debates = store.get_debate_history(limit=args.limit)
 
-    from rich.table import Table
-
-    table = Table(show_header=True, header_style="bold magenta", expand=True)
-    table.add_column("Name", style="cyan", no_wrap=True, min_width=25)
-    table.add_column("Stages", justify="center", no_wrap=True)
-    table.add_column("Description")
-
-    for p in pipelines:
-        stage_chain = " → ".join(s.template_name for s in p.stages)
-        table.add_row(p.name, str(len(p.stages)), p.description[:80] + ("…" if len(p.description) > 80 else ""))
-        table.add_row("", "", f"[dim]{stage_chain}[/dim]")
-
-    console.print(table)
-    console.print()
-    console.print(
-        "[dim]Run a pipeline:[/dim] [green]crucible pipeline <name> --subject 'Your topic'[/green]"
-    )
-    console.print(
-        "[dim]Ad-hoc pipeline:[/dim] [green]crucible compose t1 t2 t3 --subject 'Your topic'[/green]"
-    )
-
-
-async def _cmd_pipeline(args: Any) -> None:
-    from .templates.pipelines import get_pipeline
-    from .templates.composer import run_pipeline_cli
-
-    try:
-        pipeline = get_pipeline(args.pipeline_name)
-    except KeyError as exc:
-        console.print(f"[red]{exc}[/red]")
-        sys.exit(1)
-
-    if getattr(args, "plan", False):
-        console.print(Panel(
-            f"[bold cyan]{pipeline.name}[/bold cyan]\n"
-            f"[dim]{pipeline.description}[/dim]\n\n"
-            + "\n".join(
-                f"  {i + 1}. [cyan]{s.template_name}[/cyan]"
-                + (" [yellow](debate gate)[/yellow]" if s.debate_gate else "")
-                for i, s in enumerate(pipeline.stages)
-            ),
-            title="Pipeline Plan",
-        ))
-        console.print("\n[dim]Run without --plan to execute.[/dim]")
+    if not debates:
+        console.print("[yellow]No debate history found.[/yellow]")
         return
 
-    subject = getattr(args, "subject", "") or pipeline.name
-    await run_pipeline_cli(
-        pipeline=pipeline,
-        subject=subject,
-        api_key=args.api_key,
-        model=args.model,
-        verbose=args.verbose,
+    table = Table(
+        title=f"Debate History (last {len(debates)})",
+        show_header=True,
+        header_style="bold magenta",
+        expand=True,
     )
+    table.add_column("Date", no_wrap=True, style="dim")
+    table.add_column("Topic")
+    table.add_column("Winner", style="green", no_wrap=True)
+    table.add_column("Score", justify="right", no_wrap=True)
 
-
-async def _cmd_compose(args: Any) -> None:
-    from .templates.composer import Pipeline, PipelineBuilder, run_pipeline_cli
-
-    builder = PipelineBuilder(
-        name="ad-hoc",
-        description=f"Ad-hoc pipeline: {' → '.join(args.templates)}",
-    )
-    for tmpl_name in args.templates:
-        builder.then(
-            tmpl_name,
-            debate_gate=getattr(args, "debate_gates", False),
+    for d in debates:
+        table.add_row(
+            d["created_at"][:16],
+            d["topic"][:80] + ("…" if len(d["topic"]) > 80 else ""),
+            d["winner"] or "—",
+            f"{d['winner_score']:.1f}",
         )
 
-    pipeline = builder.build()
-    subject = getattr(args, "subject", "") or "ad-hoc pipeline"
+    console.print()
+    console.print(table)
+    console.print()
 
-    await run_pipeline_cli(
-        pipeline=pipeline,
-        subject=subject,
-        api_key=args.api_key,
-        model=args.model,
-        verbose=args.verbose,
+
+def _cmd_stats(args: Any) -> None:
+    from .memory.sqlite_store import SQLiteMemoryStore
+
+    store = SQLiteMemoryStore(db_path=args.db)
+
+    if args.agent:
+        perf = store.get_agent_performance(args.agent)
+        console.print(Panel(
+            f"[bold cyan]{perf['agent_name']}[/bold cyan]\n\n"
+            f"Total runs:           [green]{perf['total_runs']}[/green]\n"
+            f"Avg run duration:     [yellow]{perf['avg_duration_seconds']:.2f}s[/yellow]\n"
+            f"Debates participated: [green]{perf['debates_participated']}[/green]\n"
+            f"Debate wins:          [green]{perf['debate_wins']}[/green]\n"
+            f"Win rate:             [yellow]{perf['win_rate'] * 100:.1f}%[/yellow]\n"
+            f"Avg debate score:     [yellow]{perf['avg_score']:.2f}/10[/yellow]",
+            title="Agent Performance",
+        ))
+        return
+
+    stats = store.get_stats()
+
+    summary = (
+        f"[bold cyan]Memory Store Statistics[/bold cyan]\n\n"
+        f"Debates:    [green]{stats['debates']}[/green]\n"
+        f"Decisions:  [green]{stats['decisions']}[/green]\n"
+        f"Learnings:  [green]{stats['learnings']}[/green]\n"
+        f"Agent runs: [green]{stats['agent_runs']}[/green]\n"
+        f"Memories:   [green]{stats['memories']}[/green]"
     )
+    console.print(Panel(summary, title="Stats"))
+
+    if stats["top_agents"]:
+        table = Table(title="Top Agents by Runs", show_header=True, header_style="bold magenta")
+        table.add_column("Agent", style="cyan")
+        table.add_column("Runs", justify="right")
+        for row in stats["top_agents"]:
+            table.add_row(row["agent_name"], str(row["runs"]))
+        console.print(table)
+
+    if stats["debate_winners"]:
+        table = Table(title="Debate Winners", show_header=True, header_style="bold magenta")
+        table.add_column("Winner", style="green")
+        table.add_column("Wins", justify="right")
+        for row in stats["debate_winners"]:
+            table.add_row(row["winner"], str(row["wins"]))
+        console.print(table)
+
+    console.print()
 
 
 if __name__ == "__main__":
