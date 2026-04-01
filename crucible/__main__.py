@@ -31,6 +31,9 @@ Examples:
   crucible templates --search "marketing"
   crucible deploy seo_article --subject "Best practices for API design"
   crucible deploy web_app --plan
+  crucible pipelines
+  crucible pipeline full_product --subject "AI-powered legal assistant"
+  crucible compose market_research product_spec web_app --subject "My SaaS idea"
 """,
     )
     parser.add_argument(
@@ -79,6 +82,37 @@ Examples:
         help="Search templates by keyword"
     )
 
+    # pipelines subcommand — list pre-built pipelines
+    subparsers.add_parser("pipelines", help="List pre-built pipelines")
+
+    # pipeline subcommand — run a pre-built pipeline
+    pipeline_parser = subparsers.add_parser("pipeline", help="Run a pre-built pipeline")
+    pipeline_parser.add_argument("pipeline_name", help="Name of the pipeline to run")
+    pipeline_parser.add_argument(
+        "--subject", "-s", default="",
+        help="Subject for the pipeline"
+    )
+    pipeline_parser.add_argument(
+        "--plan", action="store_true",
+        help="Show pipeline stages without running (no API key needed)"
+    )
+
+    # compose subcommand — ad-hoc pipeline from template names
+    compose_parser = subparsers.add_parser(
+        "compose", help="Create and run an ad-hoc pipeline from templates"
+    )
+    compose_parser.add_argument(
+        "templates", nargs="+", help="Template names in execution order"
+    )
+    compose_parser.add_argument(
+        "--subject", "-s", default="",
+        help="Subject for the pipeline"
+    )
+    compose_parser.add_argument(
+        "--debate-gates", "-d", action="store_true",
+        help="Add a Debate Council gate between every stage"
+    )
+
     # deploy subcommand
     deploy_parser = subparsers.add_parser(
         "deploy", help="Deploy a template as an agent team"
@@ -99,9 +133,9 @@ Examples:
         parser.print_help()
         sys.exit(0)
 
-    # templates and deploy --plan don't need an API key
-    needs_api_key = args.command not in ("templates",) and not (
-        args.command == "deploy" and getattr(args, "plan", False)
+    # templates, pipelines and plan-mode don't need an API key
+    needs_api_key = args.command not in ("templates", "pipelines") and not (
+        args.command in ("deploy", "pipeline") and getattr(args, "plan", False)
     )
 
     if needs_api_key and not args.api_key:
@@ -121,6 +155,18 @@ async def _run(args: Any) -> None:
 
     if args.command == "templates":
         _cmd_templates(args)
+        return
+
+    if args.command == "pipelines":
+        _cmd_pipelines(args)
+        return
+
+    if args.command == "pipeline":
+        await _cmd_pipeline(args)
+        return
+
+    if args.command == "compose":
+        await _cmd_compose(args)
         return
 
     if args.command == "deploy":
@@ -315,6 +361,98 @@ async def _cmd_deploy(args: Any) -> None:
         f"Expected outputs: {len(tmpl.expected_outputs)}",
         title="Done",
     ))
+
+
+def _cmd_pipelines(_args: Any) -> None:
+    from .templates.pipelines import list_pipelines
+
+    pipelines = list_pipelines()
+    console.print()
+    console.print(Panel(
+        f"[bold cyan]Pre-built Pipelines[/bold cyan]\n"
+        f"[dim]{len(pipelines)} pipeline(s) available[/dim]",
+        title="Crucible",
+    ))
+
+    from rich.table import Table
+
+    table = Table(show_header=True, header_style="bold magenta", expand=True)
+    table.add_column("Name", style="cyan", no_wrap=True, min_width=25)
+    table.add_column("Stages", justify="center", no_wrap=True)
+    table.add_column("Description")
+
+    for p in pipelines:
+        stage_chain = " → ".join(s.template_name for s in p.stages)
+        table.add_row(p.name, str(len(p.stages)), p.description[:80] + ("…" if len(p.description) > 80 else ""))
+        table.add_row("", "", f"[dim]{stage_chain}[/dim]")
+
+    console.print(table)
+    console.print()
+    console.print(
+        "[dim]Run a pipeline:[/dim] [green]crucible pipeline <name> --subject 'Your topic'[/green]"
+    )
+    console.print(
+        "[dim]Ad-hoc pipeline:[/dim] [green]crucible compose t1 t2 t3 --subject 'Your topic'[/green]"
+    )
+
+
+async def _cmd_pipeline(args: Any) -> None:
+    from .templates.pipelines import get_pipeline
+    from .templates.composer import run_pipeline_cli
+
+    try:
+        pipeline = get_pipeline(args.pipeline_name)
+    except KeyError as exc:
+        console.print(f"[red]{exc}[/red]")
+        sys.exit(1)
+
+    if getattr(args, "plan", False):
+        console.print(Panel(
+            f"[bold cyan]{pipeline.name}[/bold cyan]\n"
+            f"[dim]{pipeline.description}[/dim]\n\n"
+            + "\n".join(
+                f"  {i + 1}. [cyan]{s.template_name}[/cyan]"
+                + (" [yellow](debate gate)[/yellow]" if s.debate_gate else "")
+                for i, s in enumerate(pipeline.stages)
+            ),
+            title="Pipeline Plan",
+        ))
+        console.print("\n[dim]Run without --plan to execute.[/dim]")
+        return
+
+    subject = getattr(args, "subject", "") or pipeline.name
+    await run_pipeline_cli(
+        pipeline=pipeline,
+        subject=subject,
+        api_key=args.api_key,
+        model=args.model,
+        verbose=args.verbose,
+    )
+
+
+async def _cmd_compose(args: Any) -> None:
+    from .templates.composer import Pipeline, PipelineBuilder, run_pipeline_cli
+
+    builder = PipelineBuilder(
+        name="ad-hoc",
+        description=f"Ad-hoc pipeline: {' → '.join(args.templates)}",
+    )
+    for tmpl_name in args.templates:
+        builder.then(
+            tmpl_name,
+            debate_gate=getattr(args, "debate_gates", False),
+        )
+
+    pipeline = builder.build()
+    subject = getattr(args, "subject", "") or "ad-hoc pipeline"
+
+    await run_pipeline_cli(
+        pipeline=pipeline,
+        subject=subject,
+        api_key=args.api_key,
+        model=args.model,
+        verbose=args.verbose,
+    )
 
 
 if __name__ == "__main__":
