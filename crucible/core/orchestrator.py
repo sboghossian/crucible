@@ -50,6 +50,61 @@ class Orchestrator:
         self._bus: EventBus | None = None
         self._state: SharedState | None = None
         self._memory = SQLiteMemoryStore(db_path=db_path)
+        # Plugin registrations — populated via register_plugin() / load_plugins_from()
+        self._plugin_classes: dict[str, type[BaseAgent]] = {}
+
+    # ------------------------------------------------------------------ #
+    # Plugin API                                                          #
+    # ------------------------------------------------------------------ #
+
+    def register_plugin(self, cls: type[BaseAgent], name: str | None = None) -> None:
+        """Register a single plugin agent class with this orchestrator."""
+        plugin_name = name or getattr(cls, "name", cls.__name__)
+        self._plugin_classes[plugin_name] = cls
+        logger.debug("Orchestrator registered plugin: %s", plugin_name)
+
+    def load_plugins_from(self, directory: str) -> None:
+        """
+        Discover and register all plugins from a directory.
+
+        This delegates to PluginLoader which imports .py files, triggering
+        @agent_plugin decorators. After loading, all newly registered plugins
+        from the global PluginRegistry are synced into this orchestrator.
+        """
+        from ..plugins.loader import PluginLoader
+        from ..plugins.registry import PluginRegistry
+
+        before = {r.name for r in PluginRegistry.instance().list_plugins()}
+        loader = PluginLoader()
+        loader.load_from_directory(directory)
+        after = {r.name for r in PluginRegistry.instance().list_plugins()}
+        new_names = after - before
+
+        for name in new_names:
+            reg = PluginRegistry.instance().get(name)
+            if reg is not None:
+                self._plugin_classes[name] = reg.cls
+
+    def load_plugin_module(self, dotted_path: str) -> None:
+        """Register a plugin from a dotted module path, e.g. 'my_pkg.MyAgent'."""
+        from ..plugins.loader import PluginLoader
+        from ..plugins.registry import PluginRegistry
+
+        before = {r.name for r in PluginRegistry.instance().list_plugins()}
+        loader = PluginLoader()
+        loader.load_from_module(dotted_path)
+        after = {r.name for r in PluginRegistry.instance().list_plugins()}
+
+        for name in after - before:
+            reg = PluginRegistry.instance().get(name)
+            if reg is not None:
+                self._plugin_classes[name] = reg.cls
+
+    def sync_plugins_from_registry(self) -> None:
+        """Pull all currently registered global plugins into this orchestrator."""
+        from ..plugins.registry import PluginRegistry
+        for reg in PluginRegistry.instance().list_plugins():
+            self._plugin_classes[reg.name] = reg.cls
 
     # ------------------------------------------------------------------ #
     # Public API                                                           #
@@ -95,10 +150,11 @@ class Orchestrator:
         )
         self._bus.subscribe_all(learning_agent.on_event)
 
-        agents_to_run = set(run_agents or [
+        builtin_agents = [
             "scanner", "research", "pattern_analyst", "debate",
             "forecast", "visualizer", "course_builder", "publisher",
-        ])
+        ]
+        agents_to_run = set(run_agents or (builtin_agents + list(self._plugin_classes)))
 
         # Phase 1: Data gathering (parallel where possible)
         phase1_tasks = []
@@ -144,6 +200,18 @@ class Orchestrator:
             await self._run_course_builder(subject)
         if "publisher" in agents_to_run:
             await self._run_publisher(subject)
+
+        # Phase 6: Plugin agents
+        from ..plugins.hooks import HookRegistry
+        hook_registry = HookRegistry.instance()
+        await hook_registry.fire("before_run", subject=subject, run_id=run_id)
+        plugin_tasks = []
+        for name, cls in self._plugin_classes.items():
+            if name in agents_to_run:
+                plugin_tasks.append(self._run_plugin_agent(cls, name, subject=subject))
+        if plugin_tasks:
+            await asyncio.gather(*plugin_tasks, return_exceptions=True)
+        await hook_registry.fire("after_run", subject=subject, run_id=run_id)
 
         await self._state.update(
             status="complete",
@@ -355,6 +423,22 @@ class Orchestrator:
             config=self._config,
         )
         return await agent.execute(subject=subject)
+
+    async def _run_plugin_agent(self, cls: type[BaseAgent], name: str, **kwargs: Any) -> AgentResult:
+        agent = cls(
+            client=self._client,
+            state=self._state,  # type: ignore[arg-type]
+            bus=self._bus,  # type: ignore[arg-type]
+            config=self._config,
+        )
+        from ..plugins.hooks import HookRegistry
+        hooks = HookRegistry.instance()
+        try:
+            result = await agent.execute(**kwargs)
+            return result
+        except Exception as exc:
+            await hooks.fire("on_error", agent_name=name, error=str(exc))
+            raise
 
     def _build_debate_context(self, state: Any) -> str:
         parts: list[str] = []

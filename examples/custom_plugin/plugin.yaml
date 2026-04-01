@@ -1,0 +1,10 @@
+name: sentiment-analyzer
+version: 1.0.0
+description: A custom agent plugin that performs sentiment analysis on research findings
+author: Steph
+agents:
+  - class: SentimentAnalyzerAgent
+    module: sentiment_agent
+hooks:
+  before_run: plugin_hooks.setup
+  after_run: plugin_hooks.cleanup

@@ -49,6 +49,18 @@ Examples:
         "--personas-dir", default=None, metavar="DIR",
         help="Directory of YAML/JSON persona files to load (overrides built-in personas)"
     )
+    parser.add_argument(
+        "--plugins-dir", default=None, metavar="DIR",
+        help="Directory of plugin .py files to discover and load"
+    )
+    parser.add_argument(
+        "--plugin", default=None, metavar="MODULE.CLASS",
+        help="Explicit plugin to load, e.g. my_module.MyAgent"
+    )
+    parser.add_argument(
+        "--watch-plugins", action="store_true",
+        help="Watch --plugins-dir for changes and hot-reload plugins (dev mode)"
+    )
 
     subparsers = parser.add_subparsers(dest="command")
 
@@ -126,14 +138,23 @@ Examples:
         help="Show the deployment plan without running agents (no API key needed)"
     )
 
+    # plugins subcommand
+    plugins_parser = subparsers.add_parser("plugins", help="Manage and inspect plugins")
+    plugins_subparsers = plugins_parser.add_subparsers(dest="plugins_command")
+    plugins_list_parser = plugins_subparsers.add_parser("list", help="List registered plugins")
+    plugins_list_parser.add_argument(
+        "--plugins-dir", default=None, metavar="DIR",
+        help="Also load plugins from this directory before listing"
+    )
+
     args = parser.parse_args()
 
     if not args.command:
         parser.print_help()
         sys.exit(0)
 
-    # templates, history, and stats don't need an API key
-    needs_api_key = args.command not in ("templates", "history", "stats") and not (
+    # templates, history, stats, and plugins don't need an API key
+    needs_api_key = args.command not in ("templates", "history", "stats", "plugins") and not (
         args.command == "deploy" and getattr(args, "plan", False)
     )
 
@@ -168,9 +189,28 @@ async def _run(args: Any) -> None:
         await _cmd_deploy(args)
         return
 
+    if args.command == "plugins":
+        _cmd_plugins(args)
+        return
+
     from .core.orchestrator import Orchestrator
 
     orch = Orchestrator(api_key=args.api_key, model=args.model)
+
+    # Load plugins before running any agents
+    plugins_dir = getattr(args, "plugins_dir", None)
+    plugin_module = getattr(args, "plugin", None)
+    watch_plugins = getattr(args, "watch_plugins", False)
+
+    if plugins_dir:
+        orch.load_plugins_from(plugins_dir)
+        if watch_plugins:
+            from .plugins.loader import PluginWatcher
+            watcher = PluginWatcher(plugins_dir)
+            watcher.start()
+
+    if plugin_module:
+        orch.load_plugin_module(plugin_module)
 
     if args.command == "debate":
         options = [o.strip() for o in args.options.split(",") if o.strip()]
@@ -461,6 +501,50 @@ def _cmd_stats(args: Any) -> None:
         console.print(table)
 
     console.print()
+
+
+def _cmd_plugins(args: Any) -> None:
+    from .plugins.registry import PluginRegistry
+    from .plugins.loader import PluginLoader
+
+    plugins_dir = getattr(args, "plugins_dir", None) or getattr(args, "plugins_command_plugins_dir", None)
+    # Support --plugins-dir on the subcommand itself
+    if hasattr(args, "plugins_dir") and args.plugins_dir:
+        loader = PluginLoader()
+        loader.load_from_directory(args.plugins_dir)
+        loader.load_from_entry_points()
+
+    sub = getattr(args, "plugins_command", None)
+    if sub == "list" or sub is None:
+        plugins = PluginRegistry.instance().list_plugins()
+        if not plugins:
+            console.print("[yellow]No plugins registered.[/yellow]")
+            console.print(
+                "\n[dim]Load plugins with:[/dim] "
+                "[green]crucible --plugins-dir ./my_plugins plugins list[/green]"
+            )
+            return
+
+        table = Table(
+            title="Registered Plugins",
+            show_header=True,
+            header_style="bold magenta",
+            expand=True,
+        )
+        table.add_column("Name", style="cyan", no_wrap=True)
+        table.add_column("Version", no_wrap=True)
+        table.add_column("Source", no_wrap=True)
+        table.add_column("Description")
+
+        for p in sorted(plugins, key=lambda x: x.name):
+            table.add_row(p.name, p.version, p.source, p.description or "—")
+
+        console.print()
+        console.print(table)
+        console.print()
+    else:
+        console.print(f"[red]Unknown plugins command: {sub}[/red]")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
