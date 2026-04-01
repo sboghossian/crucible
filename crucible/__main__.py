@@ -90,6 +90,57 @@ Examples:
         help="Search templates by keyword"
     )
 
+    # debates subcommand
+    debates_parser = subparsers.add_parser(
+        "debates", help="List all recorded debate sessions with branch trees"
+    )
+    debates_parser.add_argument(
+        "--limit", "-n", type=int, default=30,
+        help="Number of sessions to show (default: 30)"
+    )
+    debates_parser.add_argument(
+        "--db", default=".crucible_memory.db",
+        help="Path to the SQLite memory database"
+    )
+
+    # replay subcommand
+    replay_parser = subparsers.add_parser("replay", help="Replay a recorded debate")
+    replay_parser.add_argument("debate_id", help="Debate session ID to replay")
+    replay_parser.add_argument(
+        "--from-round", type=int, default=None, metavar="N",
+        help="Start replay from round N"
+    )
+    replay_parser.add_argument(
+        "--speed", type=float, default=1.0,
+        help="Playback speed multiplier (default: 1.0, use 0 for instant)"
+    )
+    replay_parser.add_argument(
+        "--db", default=".crucible_memory.db",
+        help="Path to the SQLite memory database"
+    )
+
+    # branch subcommand
+    branch_parser = subparsers.add_parser(
+        "branch", help="Fork a recorded debate from a specific round"
+    )
+    branch_parser.add_argument("debate_id", help="Source debate session ID")
+    branch_parser.add_argument(
+        "--round", "-r", type=int, required=True, dest="branch_round",
+        help="Round number to branch from (1=after openings, 2=after cross-exam)"
+    )
+    branch_parser.add_argument(
+        "--persona", action="append", dest="personas", default=[],
+        help="Persona name to include in the branch (repeat for multiple)"
+    )
+    branch_parser.add_argument(
+        "--prompt", default=None,
+        help="Override the debate topic/prompt for the branch"
+    )
+    branch_parser.add_argument(
+        "--db", default=".crucible_memory.db",
+        help="Path to the SQLite memory database"
+    )
+
     # history subcommand
     history_parser = subparsers.add_parser("history", help="Show debate history")
     history_parser.add_argument(
@@ -132,8 +183,10 @@ Examples:
         parser.print_help()
         sys.exit(0)
 
-    # templates, history, and stats don't need an API key
-    needs_api_key = args.command not in ("templates", "history", "stats") and not (
+    # these commands don't need an API key
+    needs_api_key = args.command not in (
+        "templates", "history", "stats", "debates", "replay"
+    ) and not (
         args.command == "deploy" and getattr(args, "plan", False)
     )
 
@@ -162,6 +215,18 @@ async def _run(args: Any) -> None:
 
     if args.command == "stats":
         _cmd_stats(args)
+        return
+
+    if args.command == "debates":
+        _cmd_debates(args)
+        return
+
+    if args.command == "replay":
+        await _cmd_replay(args)
+        return
+
+    if args.command == "branch":
+        await _cmd_branch(args)
         return
 
     if args.command == "deploy":
@@ -216,21 +281,187 @@ async def _run(args: Any) -> None:
 
 
 async def _cmd_debate_streaming(args: Any, options: list[str]) -> None:
-    """Run a debate with real-time streaming output using Rich."""
+    """Run a debate with real-time streaming output using Rich. Auto-records to SQLite."""
     import anthropic as _anthropic
     from .streaming import DebateRenderer
     from .streaming.stream import DebateStream
+    from .replay import DebateRecorder
+    from .memory.sqlite_store import SQLiteMemoryStore
 
+    db_path = getattr(args, "db", ".crucible_memory.db")
+    store = SQLiteMemoryStore(db_path=db_path)
+    recorder = DebateRecorder(store)
     renderer = DebateRenderer(console=console)
     client = _anthropic.AsyncAnthropic(api_key=args.api_key)
     stream = DebateStream(client=client, model=args.model)
 
-    async for event in stream.run(
+    context = getattr(args, "context", "")
+    debate_id = recorder.new_session(
         topic=args.topic,
-        context=getattr(args, "context", ""),
+        context=context,
         options=options,
+    )
+
+    async for event in recorder.record(
+        debate_id,
+        stream.run(topic=args.topic, context=context, options=options),
     ):
         renderer.render(event)
+
+    console.print(f"\n[dim]Debate recorded — ID: [cyan]{debate_id}[/cyan][/dim]")
+    console.print(f"[dim]Replay: [green]crucible replay {debate_id}[/green][/dim]")
+
+
+def _cmd_debates(args: Any) -> None:
+    """List all recorded debate sessions, grouped into root debates and branches."""
+    from .memory.sqlite_store import SQLiteMemoryStore
+
+    store = SQLiteMemoryStore(db_path=args.db)
+    sessions = store.list_debate_sessions(limit=args.limit)
+
+    if not sessions:
+        console.print("[yellow]No recorded debate sessions found.[/yellow]")
+        console.print(
+            "[dim]Run a debate with --stream to record it: "
+            "[green]crucible debate 'topic' --stream[/green][/dim]"
+        )
+        return
+
+    # Separate roots from branches
+    roots = [s for s in sessions if s["parent_debate_id"] is None]
+    branches = {s["id"]: s for s in sessions if s["parent_debate_id"] is not None}
+
+    table = Table(
+        title=f"Recorded Debates ({len(sessions)} session(s))",
+        show_header=True,
+        header_style="bold magenta",
+        expand=True,
+    )
+    table.add_column("Date", no_wrap=True, style="dim", min_width=16)
+    table.add_column("ID", no_wrap=True, style="cyan", min_width=8)
+    table.add_column("Topic / Branch info")
+    table.add_column("Events", justify="right", no_wrap=True)
+    table.add_column("Done", justify="center", no_wrap=True)
+
+    def _short_id(sid: str) -> str:
+        return sid[:8]
+
+    def _add_row(s: dict, indent: str = "") -> None:
+        done = "[green]✓[/green]" if s["completed"] else "[yellow]…[/yellow]"
+        topic_text = indent + s["topic"][:70] + ("…" if len(s["topic"]) > 70 else "")
+        table.add_row(
+            s["created_at"][:16],
+            _short_id(s["id"]),
+            topic_text,
+            str(s["total_events"]),
+            done,
+        )
+
+    for root in roots:
+        _add_row(root)
+        # Show direct children
+        children = [b for b in branches.values() if b["parent_debate_id"] == root["id"]]
+        for child in children:
+            branch_info = f"  └─ [branch @ round {child['branch_round']}] {child['topic'][:50]}"
+            done = "[green]✓[/green]" if child["completed"] else "[yellow]…[/yellow]"
+            table.add_row(
+                child["created_at"][:16],
+                _short_id(child["id"]),
+                branch_info,
+                str(child["total_events"]),
+                done,
+            )
+
+    # Orphaned branches (parent not in current page)
+    known_ids = {s["id"] for s in sessions}
+    orphans = [b for b in branches.values() if b["parent_debate_id"] not in known_ids]
+    for orphan in orphans:
+        _add_row(orphan, indent="[dim](branch)[/dim] ")
+
+    console.print()
+    console.print(table)
+    console.print()
+    console.print(
+        "[dim]Replay:[/dim] [green]crucible replay <id>[/green]  "
+        "[dim]Branch:[/dim] [green]crucible branch <id> --round 2 --persona pragmatist[/green]"
+    )
+
+
+async def _cmd_replay(args: Any) -> None:
+    """Replay a recorded debate to the terminal."""
+    from .memory.sqlite_store import SQLiteMemoryStore
+    from .replay import DebatePlayer
+    from .streaming import DebateRenderer
+
+    store = SQLiteMemoryStore(db_path=args.db)
+    session = store.get_debate_session(args.debate_id)
+    if session is None:
+        console.print(f"[red]No debate session found with ID: {args.debate_id}[/red]")
+        console.print("[dim]Run 'crucible debates' to list recorded sessions.[/dim]")
+        return
+
+    speed = args.speed if args.speed > 0 else float("inf")
+    player = DebatePlayer(store)
+    renderer = DebateRenderer(console=console)
+
+    from_round = getattr(args, "from_round", None)
+    label = f"from round {from_round}" if from_round else "full replay"
+    console.print(Panel(
+        f"[bold cyan]Replaying debate[/bold cyan] ({label})\n\n"
+        f"Topic: [yellow]{session['topic']}[/yellow]\n"
+        f"ID: [dim]{args.debate_id}[/dim]  |  "
+        f"Events: {session['total_events']}  |  Speed: {speed}x",
+        title="Crucible Replay",
+    ))
+
+    if from_round is not None:
+        gen = player.replay_from(args.debate_id, round_number=from_round, speed=speed)
+    else:
+        gen = player.replay(args.debate_id, speed=speed)
+
+    async for event in gen:
+        renderer.render(event)
+
+
+async def _cmd_branch(args: Any) -> None:
+    """Fork a recorded debate from a specific round with new personas or prompt."""
+    import anthropic as _anthropic
+    from .memory.sqlite_store import SQLiteMemoryStore
+    from .replay import DebateBrancher, DebateRecorder
+    from .streaming import DebateRenderer
+
+    store = SQLiteMemoryStore(db_path=args.db)
+    session = store.get_debate_session(args.debate_id)
+    if session is None:
+        console.print(f"[red]No debate session found with ID: {args.debate_id}[/red]")
+        return
+
+    brancher = DebateBrancher(store)
+    new_personas = args.personas if args.personas else None
+    branch_id = brancher.branch(
+        debate_id=args.debate_id,
+        round_number=args.branch_round,
+        new_personas=new_personas,
+        new_prompt=args.prompt,
+    )
+
+    console.print(Panel(
+        f"[bold cyan]Branch created[/bold cyan]\n\n"
+        f"Source: [dim]{args.debate_id[:8]}[/dim]  →  Branch: [cyan]{branch_id[:8]}[/cyan]\n"
+        f"Topic: [yellow]{args.prompt or session['topic']}[/yellow]\n"
+        f"Forked at: round {args.branch_round}  |  "
+        f"Personas: {new_personas or session['personas'] or 'default'}",
+        title="Crucible Branch",
+    ))
+
+    client = _anthropic.AsyncAnthropic(api_key=args.api_key)
+    renderer = DebateRenderer(console=console)
+
+    async for event in brancher.run_branch(branch_id, client=client, model=args.model):
+        renderer.render(event)
+
+    console.print(f"\n[dim]Branch complete — ID: [cyan]{branch_id}[/cyan][/dim]")
+    console.print(f"[dim]Replay: [green]crucible replay {branch_id}[/green][/dim]")
 
 
 def _cmd_templates(args: Any) -> None:

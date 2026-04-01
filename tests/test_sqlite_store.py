@@ -97,14 +97,14 @@ class TestMigrations:
         conn = sqlite3.connect(str(tmp_path / "mig.db"))
         conn.row_factory = sqlite3.Row
         migrate(conn)
-        assert _current_version(conn) == 1
+        assert _current_version(conn) == 2
 
     def test_migration_idempotent(self, tmp_path: Path) -> None:
         conn = sqlite3.connect(str(tmp_path / "mig.db"))
         conn.row_factory = sqlite3.Row
         migrate(conn)
         migrate(conn)  # second call must be a no-op
-        assert _current_version(conn) == 1
+        assert _current_version(conn) == 2
 
 
 # ------------------------------------------------------------------ #

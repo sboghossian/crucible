@@ -97,6 +97,40 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_memories_agent ON memories(agent_name);
         """,
     ),
+    (
+        2,
+        "debate replay tables",
+        """
+        CREATE TABLE IF NOT EXISTS debate_sessions (
+            id TEXT PRIMARY KEY,
+            topic TEXT NOT NULL,
+            context TEXT NOT NULL DEFAULT '',
+            options_json TEXT NOT NULL DEFAULT '[]',
+            personas_json TEXT NOT NULL DEFAULT '[]',
+            parent_debate_id TEXT,
+            branch_round INTEGER,
+            new_prompt TEXT,
+            total_events INTEGER NOT NULL DEFAULT 0,
+            completed INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS debate_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            debate_id TEXT NOT NULL REFERENCES debate_sessions(id),
+            seq INTEGER NOT NULL,
+            round_number INTEGER NOT NULL DEFAULT 0,
+            persona TEXT NOT NULL DEFAULT '',
+            event_kind TEXT NOT NULL,
+            event_json TEXT NOT NULL,
+            elapsed_ms INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_events_debate_seq ON debate_events(debate_id, seq);
+        CREATE INDEX IF NOT EXISTS idx_sessions_parent ON debate_sessions(parent_debate_id);
+        """,
+    ),
 ]
 
 
