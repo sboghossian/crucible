@@ -4,19 +4,36 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..core.agent import AgentResult, BaseAgent
-from ..core.state import ResearchResult
+import anthropic
+
+from ..core.agent import AgentConfig, AgentResult, BaseAgent
+from ..core.events import EventBus
+from ..core.state import ResearchResult, SharedState
+from ..search.engine import SearchEngine
+from ..search.result import SearchResult
 
 
 class ResearchAgent(BaseAgent):
     """
-    Research agent that synthesizes current knowledge about a topic.
+    Research agent that synthesizes knowledge about a topic.
 
-    In the MVP, this uses the LLM's training knowledge. In production,
-    plug in web search via httpx + search API (Brave, Tavily, etc.).
+    When a ``search_engine`` is provided, the agent first pulls live web
+    results and uses them as grounding context for the LLM synthesis.  All
+    retrieved URLs are cited in the output.
     """
 
     name = "research"
+
+    def __init__(
+        self,
+        client: anthropic.AsyncAnthropic,
+        state: SharedState,
+        bus: EventBus,
+        config: AgentConfig | None = None,
+        search_engine: SearchEngine | None = None,
+    ) -> None:
+        super().__init__(client, state, bus, config)
+        self._search_engine = search_engine
 
     @property
     def system_prompt(self) -> str:
@@ -28,10 +45,20 @@ class ResearchAgent(BaseAgent):
             "Flag uncertainty explicitly — never fabricate specifics."
         )
 
+    async def web_search(self, query: str, max_results: int = 5) -> list[SearchResult]:
+        """Perform a live web search and return results. Returns [] if no engine."""
+        if self._search_engine is None:
+            return []
+        return await self._search_engine.search(query, max_results=max_results)
+
     async def run(self, query: str, **_: Any) -> AgentResult:
+        # Phase 0: Live web search (if engine configured)
+        search_results = await self.web_search(query)
+        search_context = _format_search_context(search_results)
+
         # Phase 1: Generate structured findings
         findings_prompt = f"""Research topic: {query}
-
+{search_context}
 Generate 5-7 specific, concrete findings about this topic.
 
 For each finding:
@@ -51,7 +78,7 @@ CONFIDENCE: <HIGH|MEDIUM|LOW>"""
 
         # Phase 2: Synthesize into a coherent narrative
         synthesis_prompt = f"""Research topic: {query}
-
+{search_context}
 Raw findings:
 {findings_text}
 
@@ -62,10 +89,16 @@ Now synthesize these findings into a coherent 2-3 paragraph analysis that:
 
         synthesis = await self._llm([{"role": "user", "content": synthesis_prompt}])
 
+        # Build source list — cite real URLs when available
+        if search_results:
+            sources = [r.cite() for r in search_results]
+        else:
+            sources = ["LLM knowledge synthesis (no live search configured)"]
+
         result = ResearchResult(
             query=query,
             findings=findings,
-            sources=["LLM knowledge synthesis (MVP — plug in live search for production)"],
+            sources=sources,
             synthesis=synthesis,
         )
 
@@ -83,9 +116,20 @@ Now synthesize these findings into a coherent 2-3 paragraph analysis that:
         for line in text.split("\n"):
             line = line.strip()
             if line.startswith("FINDING"):
-                # Extract the claim portion after the colon
                 if ":" in line:
                     claim = line.split(":", 1)[1].strip()
                     if claim:
                         findings.append(claim)
         return findings if findings else [text[:500]]
+
+
+def _format_search_context(results: list[SearchResult]) -> str:
+    """Format search results as an LLM-friendly context block."""
+    if not results:
+        return ""
+    lines = [r.to_context_line() for r in results]
+    return (
+        "\nRecent web search results (use these as grounding evidence):\n"
+        + "\n".join(lines)
+        + "\n"
+    )
