@@ -15,6 +15,7 @@ from .events import Event, EventBus, EventType
 from .state import DebateResult, SharedState
 from ..debate.protocol import DebateProtocol
 from ..debate.resolver import format_summary, resolve, to_debate_result
+from ..memory.sqlite_store import SQLiteMemoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ class Orchestrator:
         model: str = "claude-opus-4-6",
         debate_model: str = "claude-opus-4-6",
         max_tokens: int = 4096,
+        db_path: str = ".crucible_memory.db",
     ) -> None:
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
         self._model = model
@@ -46,6 +48,7 @@ class Orchestrator:
         self._agents: list[BaseAgent] = []
         self._bus: EventBus | None = None
         self._state: SharedState | None = None
+        self._memory = SQLiteMemoryStore(db_path=db_path)
 
     # ------------------------------------------------------------------ #
     # Public API                                                           #
@@ -204,6 +207,29 @@ class Orchestrator:
         resolution = resolve(transcript)
         summary = format_summary(resolution, verbose=verbose)
         logger.info("\n%s", summary)
+
+        # Persist debate and decision to SQLite
+        debate_id = str(uuid.uuid4())
+        await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: self._memory.save_debate(
+                debate_id=debate_id,
+                topic=topic,
+                rounds=result.rounds,
+                winner=result.winner,
+                scores=result.scores,
+            ),
+        )
+        if result.decision:
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: self._memory.save_decision(
+                    debate_id=debate_id,
+                    decision=result.decision,
+                    rationale=summary,
+                    confidence=result.winner_score / 10.0,
+                ),
+            )
 
         await self._bus.publish(Event(
             type=EventType.DEBATE_COMPLETED,

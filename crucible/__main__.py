@@ -79,6 +79,28 @@ Examples:
         help="Search templates by keyword"
     )
 
+    # history subcommand
+    history_parser = subparsers.add_parser("history", help="Show debate history")
+    history_parser.add_argument(
+        "--limit", "-n", type=int, default=20,
+        help="Number of debates to show (default: 20)"
+    )
+    history_parser.add_argument(
+        "--db", default=".crucible_memory.db",
+        help="Path to the SQLite memory database"
+    )
+
+    # stats subcommand
+    stats_parser = subparsers.add_parser("stats", help="Show memory store statistics")
+    stats_parser.add_argument(
+        "--agent", "-a", default="",
+        help="Show performance stats for a specific agent"
+    )
+    stats_parser.add_argument(
+        "--db", default=".crucible_memory.db",
+        help="Path to the SQLite memory database"
+    )
+
     # deploy subcommand
     deploy_parser = subparsers.add_parser(
         "deploy", help="Deploy a template as an agent team"
@@ -99,8 +121,8 @@ Examples:
         parser.print_help()
         sys.exit(0)
 
-    # templates and deploy --plan don't need an API key
-    needs_api_key = args.command not in ("templates",) and not (
+    # templates, history, and stats don't need an API key
+    needs_api_key = args.command not in ("templates", "history", "stats") and not (
         args.command == "deploy" and getattr(args, "plan", False)
     )
 
@@ -121,6 +143,14 @@ async def _run(args: Any) -> None:
 
     if args.command == "templates":
         _cmd_templates(args)
+        return
+
+    if args.command == "history":
+        _cmd_history(args)
+        return
+
+    if args.command == "stats":
+        _cmd_stats(args)
         return
 
     if args.command == "deploy":
@@ -315,6 +345,90 @@ async def _cmd_deploy(args: Any) -> None:
         f"Expected outputs: {len(tmpl.expected_outputs)}",
         title="Done",
     ))
+
+
+def _cmd_history(args: Any) -> None:
+    from .memory.sqlite_store import SQLiteMemoryStore
+
+    store = SQLiteMemoryStore(db_path=args.db)
+    debates = store.get_debate_history(limit=args.limit)
+
+    if not debates:
+        console.print("[yellow]No debate history found.[/yellow]")
+        return
+
+    table = Table(
+        title=f"Debate History (last {len(debates)})",
+        show_header=True,
+        header_style="bold magenta",
+        expand=True,
+    )
+    table.add_column("Date", no_wrap=True, style="dim")
+    table.add_column("Topic")
+    table.add_column("Winner", style="green", no_wrap=True)
+    table.add_column("Score", justify="right", no_wrap=True)
+
+    for d in debates:
+        table.add_row(
+            d["created_at"][:16],
+            d["topic"][:80] + ("…" if len(d["topic"]) > 80 else ""),
+            d["winner"] or "—",
+            f"{d['winner_score']:.1f}",
+        )
+
+    console.print()
+    console.print(table)
+    console.print()
+
+
+def _cmd_stats(args: Any) -> None:
+    from .memory.sqlite_store import SQLiteMemoryStore
+
+    store = SQLiteMemoryStore(db_path=args.db)
+
+    if args.agent:
+        perf = store.get_agent_performance(args.agent)
+        console.print(Panel(
+            f"[bold cyan]{perf['agent_name']}[/bold cyan]\n\n"
+            f"Total runs:           [green]{perf['total_runs']}[/green]\n"
+            f"Avg run duration:     [yellow]{perf['avg_duration_seconds']:.2f}s[/yellow]\n"
+            f"Debates participated: [green]{perf['debates_participated']}[/green]\n"
+            f"Debate wins:          [green]{perf['debate_wins']}[/green]\n"
+            f"Win rate:             [yellow]{perf['win_rate'] * 100:.1f}%[/yellow]\n"
+            f"Avg debate score:     [yellow]{perf['avg_score']:.2f}/10[/yellow]",
+            title="Agent Performance",
+        ))
+        return
+
+    stats = store.get_stats()
+
+    summary = (
+        f"[bold cyan]Memory Store Statistics[/bold cyan]\n\n"
+        f"Debates:    [green]{stats['debates']}[/green]\n"
+        f"Decisions:  [green]{stats['decisions']}[/green]\n"
+        f"Learnings:  [green]{stats['learnings']}[/green]\n"
+        f"Agent runs: [green]{stats['agent_runs']}[/green]\n"
+        f"Memories:   [green]{stats['memories']}[/green]"
+    )
+    console.print(Panel(summary, title="Stats"))
+
+    if stats["top_agents"]:
+        table = Table(title="Top Agents by Runs", show_header=True, header_style="bold magenta")
+        table.add_column("Agent", style="cyan")
+        table.add_column("Runs", justify="right")
+        for row in stats["top_agents"]:
+            table.add_row(row["agent_name"], str(row["runs"]))
+        console.print(table)
+
+    if stats["debate_winners"]:
+        table = Table(title="Debate Winners", show_header=True, header_style="bold magenta")
+        table.add_column("Winner", style="green")
+        table.add_column("Wins", justify="right")
+        for row in stats["debate_winners"]:
+            table.add_row(row["winner"], str(row["wins"]))
+        console.print(table)
+
+    console.print()
 
 
 if __name__ == "__main__":
