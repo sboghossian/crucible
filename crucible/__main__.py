@@ -101,6 +101,35 @@ Examples:
         "--search", "-s", default="",
         help="Search templates by keyword"
     )
+    templates_parser.add_argument(
+        "--community", action="store_true",
+        help="List community-installed templates"
+    )
+    templates_subparsers = templates_parser.add_subparsers(dest="templates_command")
+
+    # templates install
+    templates_install_parser = templates_subparsers.add_parser(
+        "install", help="Install a community template from a local path"
+    )
+    templates_install_parser.add_argument(
+        "source", help="Path to a .py file or directory containing the community template"
+    )
+
+    # templates validate
+    templates_validate_parser = templates_subparsers.add_parser(
+        "validate", help="Validate a community template before submission"
+    )
+    templates_validate_parser.add_argument(
+        "path", help="Path to the template .py file or directory to validate"
+    )
+
+    # templates info
+    templates_info_parser = templates_subparsers.add_parser(
+        "info", help="Show full metadata for a template"
+    )
+    templates_info_parser.add_argument(
+        "name", help="Template name"
+    )
 
     # debates subcommand
     debates_parser = subparsers.add_parser(
@@ -285,7 +314,15 @@ async def _run(args: Any) -> None:
     from rich.markdown import Markdown
 
     if args.command == "templates":
-        _cmd_templates(args)
+        templates_command = getattr(args, "templates_command", None)
+        if templates_command == "install":
+            _cmd_templates_install(args)
+        elif templates_command == "validate":
+            _cmd_templates_validate(args)
+        elif templates_command == "info":
+            _cmd_templates_info(args)
+        else:
+            _cmd_templates(args)
         return
 
     if args.command == "history":
@@ -569,6 +606,10 @@ async def _cmd_branch(args: Any) -> None:
 def _cmd_templates(args: Any) -> None:
     from .templates import registry
 
+    if getattr(args, "community", False):
+        _cmd_templates_community(args)
+        return
+
     if getattr(args, "search", ""):
         templates = registry.search(args.search)
         title = f"Templates matching '{args.search}'"
@@ -628,6 +669,128 @@ def _cmd_templates(args: Any) -> None:
     console.print(
         "[dim]Preview a template:[/dim] [green]crucible deploy <name> --plan[/green]"
     )
+    console.print(
+        "[dim]Community templates:[/dim] [green]crucible templates --community[/green]"
+    )
+
+
+def _cmd_templates_community(args: Any) -> None:
+    from .templates.community import list_community_templates
+
+    entries = list_community_templates()
+    if not entries:
+        console.print("[yellow]No community templates installed.[/yellow]")
+        console.print(
+            "[dim]Install one with: [green]crucible templates install <path>[/green][/dim]"
+        )
+        return
+
+    table = Table(
+        title=f"Community Templates ({len(entries)} installed)",
+        show_header=True,
+        header_style="bold magenta",
+        expand=True,
+    )
+    table.add_column("Name", style="cyan", no_wrap=True)
+    table.add_column("Author", no_wrap=True)
+    table.add_column("Version", justify="center", no_wrap=True)
+    table.add_column("Description")
+    table.add_column("License", no_wrap=True)
+
+    for entry in entries:
+        registered = "[green]✓[/green]" if entry["registered"] else "[yellow]![/yellow]"
+        table.add_row(
+            f"{registered} {entry['name']}",
+            entry["author"] or "—",
+            entry["version"] or "—",
+            (entry["description"] or "")[:80] + ("…" if len(entry.get("description", "")) > 80 else ""),
+            entry["license"] or "—",
+        )
+
+    console.print()
+    console.print(table)
+    console.print()
+    console.print("[dim]Info:[/dim] [green]crucible templates info <name>[/green]")
+
+
+def _cmd_templates_install(args: Any) -> None:
+    from .templates.community import install_template, ValidationError
+
+    console.print(f"[cyan]Validating template at:[/cyan] {args.source}")
+    try:
+        name = install_template(args.source)
+    except ValidationError as exc:
+        console.print(f"[red]Validation failed:[/red]\n{exc}")
+        sys.exit(1)
+    except FileExistsError as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+        sys.exit(1)
+
+    console.print(
+        Panel(
+            f"[bold green]Installed:[/bold green] [cyan]{name}[/cyan]\n\n"
+            f"Deploy with: [green]crucible deploy {name} --subject 'Your topic'[/green]",
+            title="Community Template Installed",
+        )
+    )
+
+
+def _cmd_templates_validate(args: Any) -> None:
+    from .templates.community import validate_submission, ValidationError
+
+    console.print(f"[cyan]Validating:[/cyan] {args.path}")
+    try:
+        submission = validate_submission(args.path)
+    except ValidationError as exc:
+        console.print(
+            Panel(f"[red]Validation failed[/red]\n\n{exc}", title="Validate")
+        )
+        sys.exit(1)
+
+    console.print(Panel(
+        f"[bold green]✓ All quality gates passed[/bold green]\n\n"
+        f"Name:    [cyan]{submission.name}[/cyan]\n"
+        f"Author:  {submission.author}\n"
+        f"Version: {submission.version}\n"
+        f"License: {submission.license}\n"
+        f"Tags:    {', '.join(submission.tags) or '—'}\n"
+        f"Tested with Crucible: {submission.tested_with_crucible_version or '—'}",
+        title="Template Validation",
+    ))
+
+
+def _cmd_templates_info(args: Any) -> None:
+    from .templates import registry
+
+    try:
+        tmpl = registry.get_template(args.name)
+    except KeyError as exc:
+        console.print(f"[red]{exc}[/red]")
+        sys.exit(1)
+
+    agent_list = "\n".join(
+        f"  • [cyan]{a.name}[/cyan] — {a.role}"
+        for a in tmpl.agents
+    )
+    output_list = "\n".join(f"  ✓ {o}" for o in tmpl.expected_outputs)
+    debate_list = "\n".join(
+        f"  {'Topic' if i == 0 else 'Option'}:  {d}"
+        for i, d in enumerate(tmpl.debate_topics)
+    ) if tmpl.debate_topics else "  —"
+    tags_str = ", ".join(tmpl.tags) if tmpl.tags else "—"
+
+    console.print(Panel(
+        f"[bold cyan]{tmpl.name}[/bold cyan]  [dim]v{tmpl.version}[/dim]\n\n"
+        f"{tmpl.description}\n\n"
+        f"[bold]Category:[/bold]  {tmpl.category}\n"
+        f"[bold]Author:[/bold]    {tmpl.author or '—'}\n"
+        f"[bold]License:[/bold]   {tmpl.license or '—'}\n"
+        f"[bold]Tags:[/bold]      {tags_str}\n\n"
+        f"[bold]Agents ({len(tmpl.agents)}):[/bold]\n{agent_list}\n\n"
+        f"[bold]Debate Council:[/bold]\n{debate_list}\n\n"
+        f"[bold]Expected Outputs:[/bold]\n{output_list}",
+        title="Template Info",
+    ))
 
 
 async def _cmd_deploy(args: Any) -> None:
