@@ -112,6 +112,21 @@ Examples:
         help="Path to the SQLite memory database"
     )
 
+    # web subcommand
+    web_parser = subparsers.add_parser("web", help="Start the debate web UI")
+    web_parser.add_argument(
+        "--port", "-p", type=int, default=8420,
+        help="Port to listen on (default: 8420)"
+    )
+    web_parser.add_argument(
+        "--db", default=".crucible_memory.db",
+        help="Path to the SQLite memory database"
+    )
+    web_parser.add_argument(
+        "--no-browser", action="store_true",
+        help="Do not open browser automatically"
+    )
+
     # deploy subcommand
     deploy_parser = subparsers.add_parser(
         "deploy", help="Deploy a template as an agent team"
@@ -132,8 +147,8 @@ Examples:
         parser.print_help()
         sys.exit(0)
 
-    # templates, history, and stats don't need an API key
-    needs_api_key = args.command not in ("templates", "history", "stats") and not (
+    # templates, history, stats, and web don't require an API key to start
+    needs_api_key = args.command not in ("templates", "history", "stats", "web") and not (
         args.command == "deploy" and getattr(args, "plan", False)
     )
 
@@ -166,6 +181,10 @@ async def _run(args: Any) -> None:
 
     if args.command == "deploy":
         await _cmd_deploy(args)
+        return
+
+    if args.command == "web":
+        await _cmd_web(args)
         return
 
     from .core.orchestrator import Orchestrator
@@ -461,6 +480,22 @@ def _cmd_stats(args: Any) -> None:
         console.print(table)
 
     console.print()
+
+
+async def _cmd_web(args: Any) -> None:
+    from .web.server import run_server
+
+    port: int = getattr(args, "port", 8420)
+    db: str = getattr(args, "db", ".crucible_memory.db")
+    no_browser: bool = getattr(args, "no_browser", False)
+    api_key: str = getattr(args, "api_key", "") or ""
+    model: str = getattr(args, "model", "claude-opus-4-6")
+
+    if not no_browser:
+        import threading, webbrowser
+        threading.Timer(0.8, lambda: webbrowser.open(f"http://localhost:{port}")).start()
+
+    await run_server(port=port, api_key=api_key, model=model, db_path=db)
 
 
 if __name__ == "__main__":
