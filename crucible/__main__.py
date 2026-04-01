@@ -56,6 +56,10 @@ Examples:
         "--context", "-c", default="",
         help="Background context for the debaters"
     )
+    debate_parser.add_argument(
+        "--stream", action="store_true",
+        help="Stream debate events in real-time with live terminal display"
+    )
 
     # analyze subcommand
     analyze_parser = subparsers.add_parser("analyze", help="Analyze a repository")
@@ -133,25 +137,28 @@ async def _run(args: Any) -> None:
 
     if args.command == "debate":
         options = [o.strip() for o in args.options.split(",") if o.strip()]
-        console.print(Panel(
-            f"[bold cyan]Debate Council convening...[/bold cyan]\n\n"
-            f"Topic: [yellow]{args.topic}[/yellow]\n"
-            f"Options: {options or 'open-ended'}",
-            title="Crucible Debate",
-        ))
-        result = await orch.standalone_debate(
-            topic=args.topic,
-            context=args.context,
-            options=options,
-            verbose=args.verbose,
-        )
-        console.print(Panel(
-            f"[bold green]Winner: {result.winner.upper()}[/bold green] "
-            f"(score: {result.winner_score:.1f}/10)\n\n"
-            f"[dim]Scores: {result.scores}[/dim]",
-            title="Result",
-        ))
-        console.print(Markdown(result.decision or "No decision recorded."))
+        if getattr(args, "stream", False):
+            await _cmd_debate_streaming(args, options)
+        else:
+            console.print(Panel(
+                f"[bold cyan]Debate Council convening...[/bold cyan]\n\n"
+                f"Topic: [yellow]{args.topic}[/yellow]\n"
+                f"Options: {options or 'open-ended'}",
+                title="Crucible Debate",
+            ))
+            result = await orch.standalone_debate(
+                topic=args.topic,
+                context=args.context,
+                options=options,
+                verbose=args.verbose,
+            )
+            console.print(Panel(
+                f"[bold green]Winner: {result.winner.upper()}[/bold green] "
+                f"(score: {result.winner_score:.1f}/10)\n\n"
+                f"[dim]Scores: {result.scores}[/dim]",
+                title="Result",
+            ))
+            console.print(Markdown(result.decision or "No decision recorded."))
 
     elif args.command == "analyze":
         console.print(f"[cyan]Analyzing repo: {args.repo}[/cyan]")
@@ -169,6 +176,24 @@ async def _run(args: Any) -> None:
             run_agents=["research", "pattern_analyst", "debate"],
         )
         console.print(Panel(str(result.get("status")), title="Run complete"))
+
+
+async def _cmd_debate_streaming(args: Any, options: list[str]) -> None:
+    """Run a debate with real-time streaming output using Rich."""
+    import anthropic as _anthropic
+    from .streaming import DebateRenderer
+    from .streaming.stream import DebateStream
+
+    renderer = DebateRenderer(console=console)
+    client = _anthropic.AsyncAnthropic(api_key=args.api_key)
+    stream = DebateStream(client=client, model=args.model)
+
+    async for event in stream.run(
+        topic=args.topic,
+        context=getattr(args, "context", ""),
+        options=options,
+    ):
+        renderer.render(event)
 
 
 def _cmd_templates(args: Any) -> None:
