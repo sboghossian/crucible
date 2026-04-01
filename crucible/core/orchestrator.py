@@ -17,6 +17,8 @@ from ..debate.personas import Persona
 from ..debate.protocol import DebateProtocol
 from ..debate.resolver import format_summary, resolve, to_debate_result
 from ..memory.sqlite_store import SQLiteMemoryStore
+from ..society.store import SocietyStore
+from ..society.economy import XPEconomy, XPEvent
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +52,49 @@ class Orchestrator:
         self._bus: EventBus | None = None
         self._state: SharedState | None = None
         self._memory = SQLiteMemoryStore(db_path=db_path)
+        self._society = SocietyStore(db_path=db_path)
         # Plugin registrations — populated via register_plugin() / load_plugins_from()
         self._plugin_classes: dict[str, type[BaseAgent]] = {}
+
+    # ------------------------------------------------------------------ #
+    # Society layer                                                       #
+    # ------------------------------------------------------------------ #
+
+    @property
+    def society(self) -> SocietyStore:
+        """Access the persistent Agent Society data layer."""
+        return self._society
+
+    def record_agent_xp(
+        self,
+        agent_name: str,
+        event: XPEvent,
+        context: str = "",
+    ) -> None:
+        """
+        Award XP to a named agent, creating an identity record if needed.
+
+        Safe to call from sync or async contexts (uses executor internally).
+        """
+        identity = self._society.get_identity_by_name(agent_name)
+        if identity is None:
+            from ..society.identity import AgentIdentity
+            identity = AgentIdentity(name=agent_name)
+            self._society.save_identity(identity)
+
+        tx = XPEconomy.compute_transaction(
+            agent_id=identity.agent_id,
+            event=event,
+            current_balance=identity.xp,
+            context=context,
+        )
+        identity.add_xp(tx.amount)
+        self._society.save_identity(identity)
+        self._society.save_xp_transaction(tx)
+        logger.debug(
+            "XP: %s +%d (%s) → %d [%s]",
+            agent_name, tx.amount, event.value, tx.balance_after, identity.level.value,
+        )
 
     # ------------------------------------------------------------------ #
     # Plugin API                                                          #
@@ -218,6 +261,16 @@ class Orchestrator:
             finished_at=datetime.utcnow(),
         )
 
+        # Society: award XP to all agents that ran in this session
+        final_state = await self._state.get()
+        _ran_successfully = final_state.status == "complete" and not final_state.errors
+        for agent_name in agents_to_run:
+            xp_event = XPEvent.TASK_SUCCESS if _ran_successfully else XPEvent.TASK_FAILURE
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda n=agent_name, e=xp_event: self.record_agent_xp(n, e, f"run:{run_id}"),
+            )
+
         await self._bus.publish(Event(
             type=EventType.ORCHESTRATOR_COMPLETED,
             source="orchestrator",
@@ -297,6 +350,17 @@ class Orchestrator:
                     decision=result.decision,
                     rationale=summary,
                     confidence=result.winner_score / 10.0,
+                ),
+            )
+
+        # Society: award debate win XP to the winning persona
+        if result.winner:
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: self.record_agent_xp(
+                    result.winner,
+                    XPEvent.DEBATE_WIN,
+                    f"debate:{debate_id}",
                 ),
             )
 

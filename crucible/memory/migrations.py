@@ -131,6 +131,80 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_sessions_parent ON debate_sessions(parent_debate_id);
         """,
     ),
+    (
+        3,
+        "agent society tables",
+        """
+        CREATE TABLE IF NOT EXISTS agent_identities (
+            agent_id         TEXT PRIMARY KEY,
+            name             TEXT NOT NULL,
+            agent_type       TEXT NOT NULL DEFAULT 'generic',
+            creator          TEXT NOT NULL DEFAULT 'Steph',
+            xp               INTEGER NOT NULL DEFAULT 0,
+            traits_json      TEXT NOT NULL DEFAULT '{}',
+            skill_names_json TEXT NOT NULL DEFAULT '[]',
+            created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+            last_active      TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_relationships (
+            agent_id            TEXT NOT NULL,
+            peer_id             TEXT NOT NULL,
+            trust               REAL NOT NULL DEFAULT 0.5,
+            collaboration_count INTEGER NOT NULL DEFAULT 0,
+            success_count       INTEGER NOT NULL DEFAULT 0,
+            last_interaction    TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (agent_id, peer_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS xp_transactions (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id      TEXT NOT NULL,
+            event         TEXT NOT NULL,
+            amount        INTEGER NOT NULL,
+            balance_after INTEGER NOT NULL,
+            context       TEXT NOT NULL DEFAULT '',
+            occurred_at   TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS skill_acquisitions (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id    TEXT NOT NULL,
+            skill_name  TEXT NOT NULL,
+            proficiency REAL NOT NULL DEFAULT 0.5,
+            source      TEXT NOT NULL DEFAULT 'self',
+            use_count   INTEGER NOT NULL DEFAULT 0,
+            acquired_at TEXT NOT NULL DEFAULT (datetime('now')),
+            last_used   TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS compression_tokens (
+            token_id        TEXT PRIMARY KEY,
+            agent_a         TEXT NOT NULL,
+            agent_b         TEXT NOT NULL,
+            concept         TEXT NOT NULL,
+            token           TEXT NOT NULL,
+            use_count       INTEGER NOT NULL DEFAULT 0,
+            is_active       INTEGER NOT NULL DEFAULT 0,
+            last_used_cycle INTEGER NOT NULL DEFAULT 0,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS personality_snapshots (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id    TEXT NOT NULL,
+            traits_json TEXT NOT NULL DEFAULT '{}',
+            cycle       INTEGER NOT NULL DEFAULT 0,
+            reason      TEXT NOT NULL DEFAULT '',
+            recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_xp_agent ON xp_transactions(agent_id);
+        CREATE INDEX IF NOT EXISTS idx_skills_agent ON skill_acquisitions(agent_id);
+        CREATE INDEX IF NOT EXISTS idx_snapshots_agent ON personality_snapshots(agent_id);
+        CREATE INDEX IF NOT EXISTS idx_tokens_pair ON compression_tokens(agent_a, agent_b);
+        """,
+    ),
 ]
 
 

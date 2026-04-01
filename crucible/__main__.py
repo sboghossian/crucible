@@ -213,6 +213,49 @@ Examples:
         help="Also load plugins from this directory before listing"
     )
 
+    # society subcommand
+    society_parser = subparsers.add_parser(
+        "society", help="Inspect the Agent Society — identities, XP, relationships"
+    )
+    society_sub = society_parser.add_subparsers(dest="society_command")
+
+    society_status_parser = society_sub.add_parser(
+        "status", help="Show all agents: level, XP, top skills"
+    )
+    society_status_parser.add_argument(
+        "--db", default=".crucible_memory.db",
+        help="Path to the SQLite database (default: .crucible_memory.db)"
+    )
+
+    society_rel_parser = society_sub.add_parser(
+        "relationships", help="Show the trust graph between agents"
+    )
+    society_rel_parser.add_argument(
+        "--db", default=".crucible_memory.db",
+        help="Path to the SQLite database"
+    )
+
+    society_hist_parser = society_sub.add_parser(
+        "history", help="Show an agent's evolution over time"
+    )
+    society_hist_parser.add_argument("agent_name", help="Agent name to inspect")
+    society_hist_parser.add_argument(
+        "--db", default=".crucible_memory.db",
+        help="Path to the SQLite database"
+    )
+
+    society_reset_parser = society_sub.add_parser(
+        "reset", help="Reset all society data (requires confirmation)"
+    )
+    society_reset_parser.add_argument(
+        "--db", default=".crucible_memory.db",
+        help="Path to the SQLite database"
+    )
+    society_reset_parser.add_argument(
+        "--yes", action="store_true",
+        help="Skip confirmation prompt"
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -221,7 +264,7 @@ Examples:
 
     # these commands don't need an API key
     needs_api_key = args.command not in (
-        "templates", "history", "stats", "debates", "replay"
+        "templates", "history", "stats", "debates", "replay", "society"
     ) and not (
         args.command == "deploy" and getattr(args, "plan", False)
     )
@@ -263,6 +306,10 @@ async def _run(args: Any) -> None:
 
     if args.command == "branch":
         await _cmd_branch(args)
+        return
+
+    if args.command == "society":
+        _cmd_society(args)
         return
 
     if args.command == "deploy":
@@ -763,6 +810,195 @@ async def _cmd_web(args: Any) -> None:
         threading.Timer(0.8, lambda: webbrowser.open(f"http://localhost:{port}")).start()
 
     await run_server(port=port, api_key=api_key, model=model, db_path=db)
+
+
+def _cmd_society(args: Any) -> None:
+    """Dispatch society sub-commands."""
+    cmd = getattr(args, "society_command", None)
+    if cmd is None:
+        console.print("[yellow]Usage: crucible society {status|relationships|history|reset}[/yellow]")
+        return
+    if cmd == "status":
+        _society_status(args)
+    elif cmd == "relationships":
+        _society_relationships(args)
+    elif cmd == "history":
+        _society_history(args)
+    elif cmd == "reset":
+        _society_reset(args)
+    else:
+        console.print(f"[red]Unknown society command: {cmd}[/red]")
+
+
+def _society_status(args: Any) -> None:
+    from .society.store import SocietyStore
+
+    store = SocietyStore(db_path=args.db)
+    identities = store.list_identities()
+
+    if not identities:
+        console.print("[yellow]No agents in the society yet.[/yellow]")
+        console.print("[dim]Run a debate or research task to populate society data.[/dim]")
+        return
+
+    table = Table(
+        title=f"Agent Society — {len(identities)} agent(s)",
+        show_header=True,
+        header_style="bold magenta",
+        expand=True,
+    )
+    table.add_column("Name", style="cyan", no_wrap=True)
+    table.add_column("Level", no_wrap=True)
+    table.add_column("XP", justify="right", no_wrap=True)
+    table.add_column("To Next", justify="right", no_wrap=True, style="dim")
+    table.add_column("Top Skills")
+    table.add_column("Creator", no_wrap=True, style="dim")
+    table.add_column("Last Active", no_wrap=True, style="dim")
+
+    for ident in identities:
+        skills = store.get_skills(ident.agent_id)
+        top = ", ".join(s.name for s in sorted(skills, key=lambda x: x.proficiency, reverse=True)[:3])
+        to_next = str(ident.xp_to_next_level) if ident.xp_to_next_level else "—"
+        level_color = {
+            "Novice": "white",
+            "Apprentice": "green",
+            "Journeyman": "yellow",
+            "Expert": "orange3",
+            "Master": "bold red",
+        }.get(ident.level.value, "white")
+        table.add_row(
+            ident.name,
+            f"[{level_color}]{ident.level.value}[/{level_color}]",
+            str(ident.xp),
+            to_next,
+            top or "—",
+            ident.creator,
+            ident.last_active.strftime("%Y-%m-%d %H:%M"),
+        )
+
+    console.print(table)
+
+
+def _society_relationships(args: Any) -> None:
+    from .society.store import SocietyStore
+
+    store = SocietyStore(db_path=args.db)
+    relationships = store.all_relationships()
+
+    if not relationships:
+        console.print("[yellow]No agent relationships recorded yet.[/yellow]")
+        return
+
+    table = Table(
+        title="Agent Trust Graph",
+        show_header=True,
+        header_style="bold magenta",
+        expand=True,
+    )
+    table.add_column("Agent", style="cyan", no_wrap=True)
+    table.add_column("Peer", style="cyan", no_wrap=True)
+    table.add_column("Trust", justify="right", no_wrap=True)
+    table.add_column("Collaborations", justify="right", no_wrap=True)
+    table.add_column("Success Rate", justify="right", no_wrap=True)
+    table.add_column("Auto-Team?", justify="center", no_wrap=True)
+    table.add_column("Last Interaction", no_wrap=True, style="dim")
+
+    for rel in relationships:
+        trust_color = "green" if rel.trust >= 0.7 else "yellow" if rel.trust >= 0.5 else "red"
+        table.add_row(
+            rel.agent_id,
+            rel.peer_id,
+            f"[{trust_color}]{rel.trust:.2f}[/{trust_color}]",
+            str(rel.collaboration_count),
+            f"{rel.success_rate:.0%}",
+            "[green]yes[/green]" if rel.can_form_team else "[dim]no[/dim]",
+            rel.last_interaction.strftime("%Y-%m-%d %H:%M"),
+        )
+
+    console.print(table)
+
+
+def _society_history(args: Any) -> None:
+    from .society.store import SocietyStore
+
+    store = SocietyStore(db_path=args.db)
+    identity = store.get_identity_by_name(args.agent_name)
+
+    if identity is None:
+        console.print(f"[red]Agent '{args.agent_name}' not found.[/red]")
+        return
+
+    console.print(Panel(
+        f"[bold cyan]{identity.name}[/bold cyan]\n"
+        f"Level: [yellow]{identity.level.value}[/yellow]  XP: {identity.xp}\n"
+        f"Creator: {identity.creator}  Type: {identity.agent_type}\n"
+        f"Born: {identity.created_at.strftime('%Y-%m-%d %H:%M')}  "
+        f"Last active: {identity.last_active.strftime('%Y-%m-%d %H:%M')}",
+        title="Identity",
+    ))
+
+    # Personality evolution
+    snapshots = store.get_personality_history(identity.agent_id, limit=20)
+    if snapshots:
+        snap_table = Table(title="Personality Evolution", expand=True)
+        snap_table.add_column("Cycle", justify="right", no_wrap=True, style="dim")
+        snap_table.add_column("Curiosity", justify="right")
+        snap_table.add_column("Caution", justify="right")
+        snap_table.add_column("Creativity", justify="right")
+        snap_table.add_column("Precision", justify="right")
+        snap_table.add_column("Collab", justify="right")
+        snap_table.add_column("Independence", justify="right")
+        snap_table.add_column("Reason", style="dim")
+        for s in snapshots:
+            t = s.traits
+            snap_table.add_row(
+                str(s.cycle),
+                f"{t.get('curiosity', 0):.2f}",
+                f"{t.get('caution', 0):.2f}",
+                f"{t.get('creativity', 0):.2f}",
+                f"{t.get('precision', 0):.2f}",
+                f"{t.get('collaboration', 0):.2f}",
+                f"{t.get('independence', 0):.2f}",
+                s.reason[:40],
+            )
+        console.print(snap_table)
+    else:
+        console.print("[dim]No personality snapshots recorded yet.[/dim]")
+
+    # XP history
+    xp_history = store.get_xp_history(identity.agent_id, limit=15)
+    if xp_history:
+        xp_table = Table(title="XP History (latest 15)", expand=True)
+        xp_table.add_column("Event", style="cyan")
+        xp_table.add_column("Amount", justify="right")
+        xp_table.add_column("Balance", justify="right")
+        xp_table.add_column("Context", style="dim")
+        xp_table.add_column("When", style="dim", no_wrap=True)
+        for tx in xp_history:
+            amt = tx["amount"]
+            color = "green" if amt > 0 else "red" if amt < 0 else "dim"
+            xp_table.add_row(
+                tx["event"],
+                f"[{color}]{amt:+d}[/{color}]",
+                str(tx["balance_after"]),
+                tx["context"][:40],
+                tx["occurred_at"][:16],
+            )
+        console.print(xp_table)
+
+
+def _society_reset(args: Any) -> None:
+    from .society.store import SocietyStore
+
+    if not getattr(args, "yes", False):
+        confirm = input("This will wipe ALL society data. Type 'yes' to confirm: ")
+        if confirm.strip().lower() != "yes":
+            console.print("[yellow]Aborted.[/yellow]")
+            return
+
+    store = SocietyStore(db_path=args.db)
+    store.reset()
+    console.print("[green]Society data reset successfully.[/green]")
 
 
 if __name__ == "__main__":
