@@ -42,6 +42,10 @@ Examples:
         help="Claude model to use (default: claude-opus-4-6)"
     )
     parser.add_argument("--verbose", "-v", action="store_true")
+    parser.add_argument(
+        "--personas-dir", default=None, metavar="DIR",
+        help="Directory of YAML/JSON persona files to load (overrides built-in personas)"
+    )
 
     subparsers = parser.add_subparsers(dest="command")
 
@@ -55,6 +59,12 @@ Examples:
     debate_parser.add_argument(
         "--context", "-c", default="",
         help="Background context for the debaters"
+    )
+    debate_parser.add_argument(
+        "--persona", action="append", dest="personas", default=None,
+        metavar="NAME",
+        help="Select specific persona(s) for this debate (repeatable). "
+             "Use with --personas-dir to reference custom personas."
     )
 
     # analyze subcommand
@@ -133,10 +143,15 @@ async def _run(args: Any) -> None:
 
     if args.command == "debate":
         options = [o.strip() for o in args.options.split(",") if o.strip()]
+
+        # Resolve personas: load from dir if requested, then filter by name
+        debate_personas = _resolve_personas(args)
+
         console.print(Panel(
             f"[bold cyan]Debate Council convening...[/bold cyan]\n\n"
             f"Topic: [yellow]{args.topic}[/yellow]\n"
-            f"Options: {options or 'open-ended'}",
+            f"Options: {options or 'open-ended'}\n"
+            f"Personas: {[p.name for p in debate_personas] if debate_personas else 'default (4 built-in)'}",
             title="Crucible Debate",
         ))
         result = await orch.standalone_debate(
@@ -144,6 +159,7 @@ async def _run(args: Any) -> None:
             context=args.context,
             options=options,
             verbose=args.verbose,
+            personas=debate_personas or None,
         )
         console.print(Panel(
             f"[bold green]Winner: {result.winner.upper()}[/bold green] "
@@ -169,6 +185,48 @@ async def _run(args: Any) -> None:
             run_agents=["research", "pattern_analyst", "debate"],
         )
         console.print(Panel(str(result.get("status")), title="Run complete"))
+
+
+def _resolve_personas(args: Any) -> list[Any]:
+    """
+    Return a list of Persona objects based on --personas-dir and --persona flags.
+
+    - If neither flag is set: returns [] (caller uses built-in defaults).
+    - If only --personas-dir: load all personas from that dir.
+    - If only --persona: select from built-in personas by name.
+    - If both: load from dir, then filter by --persona names.
+    """
+    from .debate.personas import ALL_PERSONAS, PERSONA_BY_NAME
+
+    personas_dir = getattr(args, "personas_dir", None)
+    persona_names: list[str] = getattr(args, "personas", None) or []
+
+    if not personas_dir and not persona_names:
+        return []
+
+    if personas_dir:
+        from .personas import filter_personas, load_personas_dir
+        try:
+            pool = load_personas_dir(personas_dir)
+        except (NotADirectoryError, ImportError) as exc:
+            console.print(f"[red]--personas-dir error: {exc}[/red]")
+            import sys
+            sys.exit(1)
+        if not pool:
+            console.print(f"[yellow]Warning: no persona files found in {personas_dir}[/yellow]")
+    else:
+        pool = list(ALL_PERSONAS)
+
+    if persona_names:
+        from .personas import filter_personas
+        try:
+            return filter_personas(pool, persona_names)
+        except ValueError as exc:
+            console.print(f"[red]--persona error: {exc}[/red]")
+            import sys
+            sys.exit(1)
+
+    return pool
 
 
 def _cmd_templates(args: Any) -> None:

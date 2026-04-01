@@ -13,6 +13,7 @@ import anthropic
 from .agent import AgentConfig, AgentResult, BaseAgent
 from .events import Event, EventBus, EventType
 from .state import DebateResult, SharedState
+from ..debate.personas import Persona
 from ..debate.protocol import DebateProtocol
 from ..debate.resolver import format_summary, resolve, to_debate_result
 
@@ -229,14 +230,25 @@ class Orchestrator:
         context: str = "",
         options: list[str] | None = None,
         verbose: bool = True,
+        personas: list[Persona] | None = None,
     ) -> DebateResult:
         """
         Run a debate without a full research run.
         Creates ephemeral state for a single decision.
+
+        Args:
+            personas: Optional custom persona list. Defaults to the built-in 4.
         """
         run_id = str(uuid.uuid4())[:8]
         self._state = SharedState(run_id=run_id, subject=topic)
         self._bus = EventBus()
+        if personas is not None:
+            self._debate_protocol = DebateProtocol(
+                client=self._client,
+                model=self._debate_protocol._model,
+                max_tokens=self._debate_protocol._max_tokens,
+                personas=personas,
+            )
         return await self.decide(
             topic=topic,
             context=context,

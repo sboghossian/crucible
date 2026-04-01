@@ -8,7 +8,7 @@ from typing import Any
 
 import anthropic
 
-from .personas import ALL_PERSONAS, Persona
+from .personas import ALL_PERSONAS, PERSONA_BY_NAME, Persona
 
 import logging
 
@@ -63,10 +63,12 @@ class DebateProtocol:
         client: anthropic.AsyncAnthropic,
         model: str = "claude-opus-4-6",
         max_tokens: int = 1024,
+        personas: list[Persona] | None = None,
     ) -> None:
         self._client = client
         self._model = model
         self._max_tokens = max_tokens
+        self._personas: list[Persona] = personas if personas is not None else list(ALL_PERSONAS)
 
     async def run(
         self,
@@ -110,7 +112,7 @@ class DebateProtocol:
         prompt = self._build_opening_prompt(topic, context, options)
         tasks = [
             self._get_statement(persona, prompt, round_num=1)
-            for persona in ALL_PERSONAS
+            for persona in self._personas
         ]
         return list(await asyncio.gather(*tasks))
 
@@ -124,7 +126,7 @@ class DebateProtocol:
         transcript_text = self._format_statements(prior_statements)
         tasks = [
             self._get_cross_examination(persona, topic, context, options, transcript_text)
-            for persona in ALL_PERSONAS
+            for persona in self._personas
         ]
         return list(await asyncio.gather(*tasks))
 
@@ -138,7 +140,7 @@ class DebateProtocol:
         transcript_text = self._format_statements(prior_statements)
         tasks = [
             self._get_closing(persona, topic, context, options, transcript_text)
-            for persona in ALL_PERSONAS
+            for persona in self._personas
         ]
         return list(await asyncio.gather(*tasks))
 
@@ -192,7 +194,7 @@ Start with: "Cross-examination:"
 """
         stmt = await self._get_statement(persona, prompt, round_num=2)
         # Parse which personas were challenged
-        for p in ALL_PERSONAS:
+        for p in self._personas:
             if p.name != persona.name and p.role.lower() in stmt.content.lower():
                 stmt.targets.append(p.name)
         return stmt
@@ -234,10 +236,11 @@ Start with: "Closing argument:"
     async def _score_transcript(self, transcript: DebateTranscript) -> None:
         """Score each persona's closing argument and compute the winner."""
         closing_statements = [s for s in transcript.statements if s.round == 3]
+        personas_by_name = {p.name: p for p in self._personas}
 
         score_tasks = [
-            self._score_statement(stmt, ALL_PERSONAS[i])
-            for i, stmt in enumerate(closing_statements)
+            self._score_statement(stmt, personas_by_name.get(stmt.persona_name, self._personas[0]))
+            for stmt in closing_statements
         ]
         raw_scores = await asyncio.gather(*score_tasks, return_exceptions=True)
 
@@ -247,8 +250,7 @@ Start with: "Closing argument:"
                 persona_scores[stmt.persona_name] = 5.0  # neutral fallback
                 continue
 
-            from .personas import PERSONA_BY_NAME
-            persona = PERSONA_BY_NAME.get(stmt.persona_name)
+            persona = personas_by_name.get(stmt.persona_name)
             if persona is None:
                 persona_scores[stmt.persona_name] = 5.0
                 continue
