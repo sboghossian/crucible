@@ -70,6 +70,22 @@ class DebateProtocol:
         self._max_tokens = max_tokens
         self._personas: list[Persona] = personas if personas is not None else list(ALL_PERSONAS)
 
+    async def run_streaming(
+        self,
+        topic: str,
+        context: str = "",
+        options: list[str] | None = None,
+    ):  # -> AsyncIterator[DebateEvent]
+        """Yield debate events as they happen. Import DebateStream for full streaming support."""
+        from ..streaming.stream import DebateStream
+        stream = DebateStream(
+            client=self._client,
+            model=self._model,
+            max_tokens=self._max_tokens,
+        )
+        async for event in stream.run(topic=topic, context=context, options=options):
+            yield event
+
     async def run(
         self,
         topic: str,

@@ -64,10 +64,8 @@ Examples:
         help="Background context for the debaters"
     )
     debate_parser.add_argument(
-        "--persona", action="append", dest="personas", default=None,
-        metavar="NAME",
-        help="Select specific persona(s) for this debate (repeatable). "
-             "Use with --personas-dir to reference custom personas."
+        "--stream", action="store_true",
+        help="Stream debate events in real-time with live terminal display"
     )
 
     # analyze subcommand
@@ -176,31 +174,28 @@ async def _run(args: Any) -> None:
 
     if args.command == "debate":
         options = [o.strip() for o in args.options.split(",") if o.strip()]
-
-        # Resolve personas: load from dir if requested, then filter by name
-        debate_personas = _resolve_personas(args)
-
-        console.print(Panel(
-            f"[bold cyan]Debate Council convening...[/bold cyan]\n\n"
-            f"Topic: [yellow]{args.topic}[/yellow]\n"
-            f"Options: {options or 'open-ended'}\n"
-            f"Personas: {[p.name for p in debate_personas] if debate_personas else 'default (4 built-in)'}",
-            title="Crucible Debate",
-        ))
-        result = await orch.standalone_debate(
-            topic=args.topic,
-            context=args.context,
-            options=options,
-            verbose=args.verbose,
-            personas=debate_personas or None,
-        )
-        console.print(Panel(
-            f"[bold green]Winner: {result.winner.upper()}[/bold green] "
-            f"(score: {result.winner_score:.1f}/10)\n\n"
-            f"[dim]Scores: {result.scores}[/dim]",
-            title="Result",
-        ))
-        console.print(Markdown(result.decision or "No decision recorded."))
+        if getattr(args, "stream", False):
+            await _cmd_debate_streaming(args, options)
+        else:
+            console.print(Panel(
+                f"[bold cyan]Debate Council convening...[/bold cyan]\n\n"
+                f"Topic: [yellow]{args.topic}[/yellow]\n"
+                f"Options: {options or 'open-ended'}",
+                title="Crucible Debate",
+            ))
+            result = await orch.standalone_debate(
+                topic=args.topic,
+                context=args.context,
+                options=options,
+                verbose=args.verbose,
+            )
+            console.print(Panel(
+                f"[bold green]Winner: {result.winner.upper()}[/bold green] "
+                f"(score: {result.winner_score:.1f}/10)\n\n"
+                f"[dim]Scores: {result.scores}[/dim]",
+                title="Result",
+            ))
+            console.print(Markdown(result.decision or "No decision recorded."))
 
     elif args.command == "analyze":
         console.print(f"[cyan]Analyzing repo: {args.repo}[/cyan]")
@@ -220,46 +215,22 @@ async def _run(args: Any) -> None:
         console.print(Panel(str(result.get("status")), title="Run complete"))
 
 
-def _resolve_personas(args: Any) -> list[Any]:
-    """
-    Return a list of Persona objects based on --personas-dir and --persona flags.
+async def _cmd_debate_streaming(args: Any, options: list[str]) -> None:
+    """Run a debate with real-time streaming output using Rich."""
+    import anthropic as _anthropic
+    from .streaming import DebateRenderer
+    from .streaming.stream import DebateStream
 
-    - If neither flag is set: returns [] (caller uses built-in defaults).
-    - If only --personas-dir: load all personas from that dir.
-    - If only --persona: select from built-in personas by name.
-    - If both: load from dir, then filter by --persona names.
-    """
-    from .debate.personas import ALL_PERSONAS, PERSONA_BY_NAME
+    renderer = DebateRenderer(console=console)
+    client = _anthropic.AsyncAnthropic(api_key=args.api_key)
+    stream = DebateStream(client=client, model=args.model)
 
-    personas_dir = getattr(args, "personas_dir", None)
-    persona_names: list[str] = getattr(args, "personas", None) or []
-
-    if not personas_dir and not persona_names:
-        return []
-
-    if personas_dir:
-        from .personas import filter_personas, load_personas_dir
-        try:
-            pool = load_personas_dir(personas_dir)
-        except (NotADirectoryError, ImportError) as exc:
-            console.print(f"[red]--personas-dir error: {exc}[/red]")
-            import sys
-            sys.exit(1)
-        if not pool:
-            console.print(f"[yellow]Warning: no persona files found in {personas_dir}[/yellow]")
-    else:
-        pool = list(ALL_PERSONAS)
-
-    if persona_names:
-        from .personas import filter_personas
-        try:
-            return filter_personas(pool, persona_names)
-        except ValueError as exc:
-            console.print(f"[red]--persona error: {exc}[/red]")
-            import sys
-            sys.exit(1)
-
-    return pool
+    async for event in stream.run(
+        topic=args.topic,
+        context=getattr(args, "context", ""),
+        options=options,
+    ):
+        renderer.render(event)
 
 
 def _cmd_templates(args: Any) -> None:
