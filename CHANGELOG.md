@@ -53,7 +53,15 @@ All notable changes to Crucible are documented here.
 
 ## Roadmap
 
-- `v0.2` — Agent Society layer: persistent identities, relationship graphs, behavioral drift tracking
-- `v0.3` — Plugin API: drop-in custom agents and debate personas
-- `v0.4` — Web UI: real-time debate visualization, run replay, memory inspector
-- `v1.0` — PyPI stable release, versioned API contract
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the full roadmap with technical details, complexity estimates, and dependencies.
+
+**Phase 1 — Real-Time Experience (v0.2)**
+- Streaming output, Web UI, Debate replay and branching
+
+**Phase 2 — Extensibility (v0.3)**
+- Plugin API, Custom persona definitions, Template composer, Template versioning and community submissions
+
+**Phase 3 — Intelligence (v0.4)**
+- Live web search integration, SQLite memory persistence, Agent Society Phase 2
+
+`v1.0` — PyPI stable release, versioned API contract

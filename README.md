@@ -510,16 +510,26 @@ for agent_name, data in results.items():
 
 ## Roadmap
 
-- [ ] Streaming output (watch debates unfold in real-time)
-- [ ] Web UI (visual debate transcript viewer)
-- [ ] Plugin API (custom agents)
-- [ ] Live web search integration
-- [ ] SQLite memory persistence across runs
-- [ ] Debate replay and branching
-- [ ] Custom persona definitions
-- [ ] Agent Society Phase 2 (persistent identity, XP economy)
-- [ ] Template composer (combine templates into multi-stage pipelines)
-- [ ] Template versioning and community submissions
+Full details in [docs/ROADMAP.md](docs/ROADMAP.md).
+
+### Phase 1 — Real-Time Experience (v0.2)
+
+- [ ] **Streaming output** — watch debates unfold token-by-token in real-time
+- [ ] **Web UI** — visual debate transcript viewer with timeline, persona highlights, scoring visualization
+- [ ] **Debate replay and branching** — rewind to any decision point, fork with different personas or prompts
+
+### Phase 2 — Extensibility (v0.3)
+
+- [ ] **Plugin API** — register custom agents with a simple decorator, hot-reload during runs
+- [ ] **Custom persona definitions** — YAML/JSON persona configs so anyone can define new debate participants
+- [ ] **Template composer** — combine multiple templates into multi-stage pipelines (e.g., "Research → Spec → Build → Test")
+- [ ] **Template versioning and community submissions** — semantic versioning, PR-based submission flow, quality gates
+
+### Phase 3 — Intelligence (v0.4)
+
+- [ ] **Live web search integration** — agents can pull real-time data during debates and research
+- [ ] **SQLite memory persistence across runs** — every debate, decision, and learning persists locally
+- [ ] **Agent Society Phase 2** — persistent identity, XP economy, emergent language, personality drift (full spec in [docs/architecture/agent-society-spec.md](docs/architecture/agent-society-spec.md))
 
 ---
 
