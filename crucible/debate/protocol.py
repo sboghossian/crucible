@@ -9,6 +9,8 @@ from typing import Any
 import anthropic
 
 from .personas import ALL_PERSONAS, PERSONA_BY_NAME, Persona
+from ..search.engine import SearchEngine
+from ..search.result import SearchResult
 
 import logging
 
@@ -64,11 +66,13 @@ class DebateProtocol:
         model: str = "claude-opus-4-6",
         max_tokens: int = 1024,
         personas: list[Persona] | None = None,
+        search_engine: SearchEngine | None = None,
     ) -> None:
         self._client = client
         self._model = model
         self._max_tokens = max_tokens
         self._personas: list[Persona] = personas if personas is not None else list(ALL_PERSONAS)
+        self._search_engine = search_engine
 
     async def run_streaming(
         self,
@@ -85,6 +89,20 @@ class DebateProtocol:
         )
         async for event in stream.run(topic=topic, context=context, options=options):
             yield event
+
+    async def evidence_request(self, query: str, max_results: int = 3) -> list[SearchResult]:
+        """
+        Trigger a live web search to gather evidence for a debate topic.
+
+        Called during cross-examination so personas can back their challenges
+        with real-time data.  Returns an empty list when no search engine is
+        configured.
+        """
+        if self._search_engine is None:
+            return []
+        results = await self._search_engine.search(query, max_results=max_results)
+        logger.debug("Evidence request for %r returned %d results", query, len(results))
+        return results
 
     async def run(
         self,
@@ -140,8 +158,10 @@ class DebateProtocol:
         prior_statements: list[Statement],
     ) -> list[Statement]:
         transcript_text = self._format_statements(prior_statements)
+        # Optionally fetch live evidence to ground the cross-examination
+        evidence = await self.evidence_request(topic)
         tasks = [
-            self._get_cross_examination(persona, topic, context, options, transcript_text)
+            self._get_cross_examination(persona, topic, context, options, transcript_text, evidence)
             for persona in self._personas
         ]
         return list(await asyncio.gather(*tasks))
@@ -183,8 +203,13 @@ class DebateProtocol:
         context: str,
         options: list[str],
         transcript_text: str,
+        evidence: list[SearchResult] | None = None,
     ) -> Statement:
         options_text = "\n".join(f"- {o}" for o in options) if options else "Open-ended"
+        evidence_block = ""
+        if evidence:
+            lines = "\n".join(f"- {r.to_context_line()}" for r in evidence)
+            evidence_block = f"\nLIVE EVIDENCE (web search results you may cite):\n{lines}\n"
         prompt = f"""DEBATE TOPIC: {topic}
 
 {f"CONTEXT: {context}" if context else ""}
@@ -194,7 +219,7 @@ OPTIONS UNDER CONSIDERATION:
 
 ROUND 1 OPENING STATEMENTS FROM ALL PARTICIPANTS:
 {transcript_text}
-
+{evidence_block}
 ---
 ROUND 2 — CROSS-EXAMINATION
 
@@ -205,7 +230,7 @@ Requirements:
 2. Explain precisely why each argument fails or is incomplete.
 3. Reinforce your own position in light of what you have read.
 4. Be direct and specific — no diplomatic hedging.
-
+{("5. You may cite the live evidence above to strengthen your challenge." if evidence else "")}
 Start with: "Cross-examination:"
 """
         stmt = await self._get_statement(persona, prompt, round_num=2)

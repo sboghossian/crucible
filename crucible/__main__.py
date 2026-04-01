@@ -34,6 +34,8 @@ Examples:
   crucible pipelines
   crucible pipeline full_product --subject "AI-powered legal assistant"
   crucible compose market_research product_spec web_app --subject "My SaaS idea"
+  crucible search "multi-agent AI frameworks 2025"
+  crucible search "Claude Sonnet benchmarks" --engine brave --results 5 --scrape
 """,
     )
     parser.add_argument(
@@ -204,6 +206,22 @@ Examples:
         help="Show the deployment plan without running agents (no API key needed)"
     )
 
+    # search subcommand
+    search_parser = subparsers.add_parser("search", help="Run a standalone web search")
+    search_parser.add_argument("query", help="Search query")
+    search_parser.add_argument(
+        "--engine", "-e", default="",
+        help="Search engine: duckduckgo (default) or brave (needs CRUCIBLE_BRAVE_API_KEY)"
+    )
+    search_parser.add_argument(
+        "--results", "-n", type=int, default=10,
+        help="Max results to return (default: 10)"
+    )
+    search_parser.add_argument(
+        "--scrape", action="store_true",
+        help="Also fetch and display text content of the top result"
+    )
+
     # plugins subcommand
     plugins_parser = subparsers.add_parser("plugins", help="Manage and inspect plugins")
     plugins_subparsers = plugins_parser.add_subparsers(dest="plugins_command")
@@ -221,7 +239,7 @@ Examples:
 
     # these commands don't need an API key
     needs_api_key = args.command not in (
-        "templates", "history", "stats", "debates", "replay"
+        "templates", "history", "stats", "debates", "replay", "search"
     ) and not (
         args.command == "deploy" and getattr(args, "plan", False)
     )
@@ -255,6 +273,10 @@ async def _run(args: Any) -> None:
 
     if args.command == "debates":
         _cmd_debates(args)
+        return
+
+    if args.command == "search":
+        await _cmd_search(args)
         return
 
     if args.command == "replay":
@@ -517,6 +539,59 @@ async def _cmd_branch(args: Any) -> None:
 
     console.print(f"\n[dim]Branch complete — ID: [cyan]{branch_id}[/cyan][/dim]")
     console.print(f"[dim]Replay: [green]crucible replay {branch_id}[/green][/dim]")
+
+
+async def _cmd_search(args: Any) -> None:
+    """Run a standalone web search and display results."""
+    from .search import get_search_engine
+    from .search.scraper import PageScraper
+
+    engine = get_search_engine(engine=getattr(args, "engine", "") or None)
+    max_results: int = getattr(args, "results", 10)
+    scrape: bool = getattr(args, "scrape", False)
+
+    console.print(
+        f"[cyan]Searching ({engine.name}):[/cyan] [yellow]{args.query}[/yellow]"
+    )
+
+    results = await engine.search(args.query, max_results=max_results)
+
+    if not results:
+        console.print("[yellow]No results found.[/yellow]")
+        return
+
+    table = Table(
+        title=f"Search results for \"{args.query}\"",
+        show_header=True,
+        header_style="bold magenta",
+        expand=True,
+    )
+    table.add_column("#", justify="right", style="dim", no_wrap=True, min_width=3)
+    table.add_column("Title")
+    table.add_column("URL", style="cyan")
+    table.add_column("Snippet")
+
+    for i, r in enumerate(results, start=1):
+        table.add_row(
+            str(i),
+            r.title[:60] + ("…" if len(r.title) > 60 else ""),
+            r.url[:50] + ("…" if len(r.url) > 50 else ""),
+            r.snippet[:100] + ("…" if len(r.snippet) > 100 else ""),
+        )
+
+    console.print()
+    console.print(table)
+
+    if scrape and results:
+        top = results[0]
+        console.print(f"\n[bold cyan]Fetching page content:[/bold cyan] {top.url}")
+        scraper = PageScraper()
+        page = await scraper.scrape(top.url)
+        if page.error:
+            console.print(f"[red]Scrape error: {page.error}[/red]")
+        else:
+            preview = page.text[:1000] + ("…" if len(page.text) > 1000 else "")
+            console.print(Panel(preview, title=page.title or top.title))
 
 
 def _cmd_templates(args: Any) -> None:
