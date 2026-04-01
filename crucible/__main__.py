@@ -11,6 +11,7 @@ from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
+from rich.table import Table
 from rich.text import Text
 
 console = Console()
@@ -25,6 +26,11 @@ Examples:
   crucible debate "Should we use microservices?" --options "yes,no,hybrid"
   crucible analyze --repo /path/to/repo --subject "my-project"
   crucible research "State of multi-agent AI frameworks 2025"
+  crucible templates
+  crucible templates --category "Software Development"
+  crucible templates --search "marketing"
+  crucible deploy seo_article --subject "Best practices for API design"
+  crucible deploy web_app --plan
 """,
     )
     parser.add_argument(
@@ -60,18 +66,50 @@ Examples:
     research_parser = subparsers.add_parser("research", help="Research a topic")
     research_parser.add_argument("query", help="Research query")
 
+    # templates subcommand
+    templates_parser = subparsers.add_parser(
+        "templates", help="Browse the agent template marketplace"
+    )
+    templates_parser.add_argument(
+        "--category", "-c", default="",
+        help="Filter by category"
+    )
+    templates_parser.add_argument(
+        "--search", "-s", default="",
+        help="Search templates by keyword"
+    )
+
+    # deploy subcommand
+    deploy_parser = subparsers.add_parser(
+        "deploy", help="Deploy a template as an agent team"
+    )
+    deploy_parser.add_argument("template_name", help="Name of the template to deploy")
+    deploy_parser.add_argument(
+        "--subject", "-s", default="",
+        help="Subject or topic for the agent team to work on"
+    )
+    deploy_parser.add_argument(
+        "--plan", action="store_true",
+        help="Show the deployment plan without running agents (no API key needed)"
+    )
+
     args = parser.parse_args()
 
     if not args.command:
         parser.print_help()
         sys.exit(0)
 
-    if not args.api_key:
+    # templates and deploy --plan don't need an API key
+    needs_api_key = args.command not in ("templates",) and not (
+        args.command == "deploy" and getattr(args, "plan", False)
+    )
+
+    if needs_api_key and not args.api_key:
         console.print("[red]Error: ANTHROPIC_API_KEY not set[/red]")
         sys.exit(1)
 
     logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
+        level=logging.DEBUG if args.verbose else logging.WARNING,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
 
@@ -79,9 +117,17 @@ Examples:
 
 
 async def _run(args: Any) -> None:
-    from .core.orchestrator import Orchestrator
-    from .debate.resolver import format_summary, resolve
     from rich.markdown import Markdown
+
+    if args.command == "templates":
+        _cmd_templates(args)
+        return
+
+    if args.command == "deploy":
+        await _cmd_deploy(args)
+        return
+
+    from .core.orchestrator import Orchestrator
 
     orch = Orchestrator(api_key=args.api_key, model=args.model)
 
@@ -123,6 +169,152 @@ async def _run(args: Any) -> None:
             run_agents=["research", "pattern_analyst", "debate"],
         )
         console.print(Panel(str(result.get("status")), title="Run complete"))
+
+
+def _cmd_templates(args: Any) -> None:
+    from .templates import registry
+
+    if getattr(args, "search", ""):
+        templates = registry.search(args.search)
+        title = f"Templates matching '{args.search}'"
+    elif getattr(args, "category", ""):
+        all_by_cat = registry.list_categories()
+        cat = args.category
+        # Case-insensitive partial match
+        matched = {
+            k: v for k, v in all_by_cat.items()
+            if cat.lower() in k.lower()
+        }
+        templates = [t for ts in matched.values() for t in ts]
+        title = f"Templates in '{args.category}'"
+    else:
+        templates = registry.list_templates()
+        title = "Agent Template Marketplace"
+
+    if not templates:
+        console.print("[yellow]No templates found.[/yellow]")
+        return
+
+    # Group by category
+    by_cat: dict[str, list[Any]] = {}
+    for t in templates:
+        by_cat.setdefault(t.category, []).append(t)
+
+    console.print()
+    console.print(Panel(
+        f"[bold cyan]{title}[/bold cyan]\n"
+        f"[dim]{len(templates)} template(s) across {len(by_cat)} categor{'y' if len(by_cat) == 1 else 'ies'}[/dim]",
+        title="Crucible",
+    ))
+
+    for category, cat_templates in sorted(by_cat.items()):
+        table = Table(
+            title=f"[bold]{category}[/bold]",
+            show_header=True,
+            header_style="bold magenta",
+            expand=True,
+        )
+        table.add_column("Name", style="cyan", no_wrap=True, min_width=30)
+        table.add_column("Description")
+        table.add_column("Agents", justify="center", no_wrap=True)
+
+        for t in sorted(cat_templates, key=lambda x: x.name):
+            table.add_row(
+                t.name,
+                t.description[:100] + ("…" if len(t.description) > 100 else ""),
+                str(len(t.agents)),
+            )
+        console.print(table)
+
+    console.print()
+    console.print(
+        "[dim]Deploy a template:[/dim] [green]crucible deploy <name> --subject 'Your topic'[/green]"
+    )
+    console.print(
+        "[dim]Preview a template:[/dim] [green]crucible deploy <name> --plan[/green]"
+    )
+
+
+async def _cmd_deploy(args: Any) -> None:
+    from .templates import registry
+
+    try:
+        session = registry.deploy_template(
+            args.template_name,
+            api_key=getattr(args, "api_key", None),
+            model=getattr(args, "model", "claude-opus-4-6"),
+        )
+    except KeyError as exc:
+        console.print(f"[red]{exc}[/red]")
+        sys.exit(1)
+
+    tmpl = session.template
+    plan = session.plan()
+
+    console.print(Panel(
+        f"[bold cyan]{tmpl.name}[/bold cyan]\n"
+        f"[dim]{tmpl.description}[/dim]\n\n"
+        f"Category: [yellow]{tmpl.category}[/yellow]  |  "
+        f"Agents: [green]{len(tmpl.agents)}[/green]  |  "
+        f"Version: {tmpl.version}",
+        title="Template",
+    ))
+
+    # Show agent roster
+    table = Table(title="Agent Team", show_header=True, header_style="bold magenta")
+    table.add_column("Agent", style="cyan")
+    table.add_column("Role")
+    for agent in tmpl.agents:
+        table.add_row(agent.name, agent.role)
+    console.print(table)
+
+    if tmpl.debate_topics:
+        console.print(
+            f"\n[bold]Debate Council topic:[/bold] {tmpl.debate_topics[0]}"
+        )
+        if len(tmpl.debate_topics) > 1:
+            for opt in tmpl.debate_topics[1:]:
+                console.print(f"  • {opt}")
+
+    console.print("\n[bold]Expected outputs:[/bold]")
+    for output in tmpl.expected_outputs:
+        console.print(f"  ✓ {output}")
+
+    if getattr(args, "plan", False):
+        console.print(
+            "\n[dim]Plan-only mode. Run without --plan to execute the agent team.[/dim]"
+        )
+        return
+
+    subject = getattr(args, "subject", "") or tmpl.name
+    console.print(
+        f"\n[bold cyan]Deploying agent team...[/bold cyan] subject: [yellow]{subject}[/yellow]\n"
+    )
+
+    results = await session.run(subject=subject)
+
+    for agent_name, data in results.items():
+        if agent_name.startswith("_"):
+            continue
+        success = data.get("success", False)
+        icon = "[green]✓[/green]" if success else "[red]✗[/red]"
+        duration = f" ({data.get('duration_seconds', 0):.1f}s)" if "duration_seconds" in data else ""
+        console.print(f"\n{icon} [bold]{agent_name}[/bold]{duration}")
+        output = data.get("output", "")
+        if output and len(str(output)) > 500:
+            console.print(str(output)[:500] + "\n[dim]... (truncated, full output in results)[/dim]")
+        elif output:
+            console.print(str(output))
+        if data.get("error"):
+            console.print(f"  [red]Error: {data['error']}[/red]")
+
+    meta = results.get("_meta", {})
+    console.print(Panel(
+        f"[bold green]Deployment complete[/bold green]\n"
+        f"Run ID: [dim]{meta.get('run_id', 'n/a')}[/dim]\n"
+        f"Expected outputs: {len(tmpl.expected_outputs)}",
+        title="Done",
+    ))
 
 
 if __name__ == "__main__":

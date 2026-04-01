@@ -303,6 +303,211 @@ Three convictions:
 
 ---
 
+## Agent Template Marketplace
+
+65 ready-to-deploy agent team configurations across 18 categories. One command to spin up a full specialist team for any task.
+
+```bash
+# Browse all templates
+crucible templates
+
+# Filter by category
+crucible templates --category "Software Development"
+
+# Search by keyword
+crucible templates --search "marketing"
+
+# Preview a deployment plan (no API key needed)
+crucible deploy seo_article --plan
+
+# Deploy and run a template
+crucible deploy web_app --subject "SaaS project management tool for remote teams"
+```
+
+### Content & Marketing
+
+| Template | Agents | What it produces |
+|---|---|---|
+| `seo_article` | 5 | SEO-optimized article, keyword map, meta tags, editorial review |
+| `social_media_campaign` | 4 | 4-week content calendar, platform-native posts, hashtag sets |
+| `newsletter` | 4 | Full newsletter issue, 8 subject line variants, HTML structure guide |
+
+### Software Development
+
+| Template | Agents | What it produces |
+|---|---|---|
+| `web_app` | 5 | Architecture doc, project scaffold, CI/CD YAML, testing strategy |
+| `mobile_app` | 4 | Platform decision, UX flows, API design, app store checklist |
+| `api_service` | 4 | OpenAPI 3.1 spec, implementation guide, security audit |
+| `chrome_extension` | 4 | Manifest V3, popup/service worker scaffold, store listing |
+
+### Research & Analysis
+
+| Template | Agents | What it produces |
+|---|---|---|
+| `market_research` | 4 | TAM/SAM/SOM, competitive landscape, buyer personas |
+| `codebase_audit` | 4 | Security audit, tech debt inventory, 90-day improvement roadmap |
+| `academic_paper` | 4 | Full paper draft, peer review simulation, citation list |
+
+### Business Operations
+
+| Template | Agents | What it produces |
+|---|---|---|
+| `startup_pitch` | 4 | Pitch deck outline, financial projections, investor one-pager |
+| `product_spec` | 4 | PRD, user stories with acceptance criteria, MVP definition |
+| `legal_review` | 4 | Risk assessment, negotiation agenda, contract clause alternatives |
+
+### Creative
+
+| Template | Agents | What it produces |
+|---|---|---|
+| `video_script` | 4 | Complete script, storyboard, shot list, YouTube SEO package |
+| `course_creator` | 4 | Course outline, 3 sample lessons, quizzes, capstone rubric |
+| `game_design` | 4 | GDD, core loop design, narrative, monetization model |
+
+### Education
+
+| Template | Agents | What it produces |
+|---|---|---|
+| `lesson_plan` | 4 | Standards-aligned lesson with differentiation strategies |
+| `tutoring_session` | 4 | Diagnostic quiz, 60-min session plan, 10 practice problems |
+| `exam_prep` | 4 | Study schedule, 20 practice questions, test-taking strategy |
+| `curriculum_design` | 4 | Scope and sequence, curriculum map, assessment framework |
+| `research_paper_review` | 4 | Methodology critique, statistical audit, plain-language summary |
+
+### E-commerce
+
+| Template | Agents | What it produces |
+|---|---|---|
+| `product_listing_optimizer` | 4 | Optimized title/bullets/description, image strategy, review emails |
+| `competitor_pricing` | 4 | Price distribution analysis, promotions calendar, margin model |
+| `customer_review_analysis` | 4 | Sentiment report, theme extraction, product improvement priorities |
+| `inventory_forecaster` | 4 | 12-month forecast, reorder points, supply chain strategy |
+
+### Healthcare & Wellness
+
+| Template | Agents | What it produces |
+|---|---|---|
+| `wellness_plan` | 4 | Nutrition plan, workout schedule, 90-day habit roadmap |
+| `patient_intake_summarizer` | 4 | Structured HPI, medication reconciliation, visit summary |
+| `symptom_checker_research` | 4 | Educational symptom profile, doctor visit preparation guide |
+
+### Real Estate
+
+| Template | Agents | What it produces |
+|---|---|---|
+| `property_analysis` | 4 | Pro forma, 5-year IRR, due diligence checklist, hold strategy |
+| `market_comparison` | 4 | Weighted scoring matrix, investment return comparison |
+| `listing_generator` | 4 | MLS copy, photography shot list, 30-day marketing launch plan |
+
+### Finance
+
+| Template | Agents | What it produces |
+|---|---|---|
+| `financial_model` | 4 | 3-statement model, scenario analysis, break-even analysis |
+| `investment_thesis` | 4 | Bull/bear case, DCF valuation, entry/exit criteria |
+| `budget_planner` | 4 | Expense audit, savings architecture, 90-day action plan |
+| `tax_prep_organizer` | 4 | Document checklist, deduction research, professional meeting prep |
+
+### HR & Recruiting
+
+| Template | Agents | What it produces |
+|---|---|---|
+| `job_description_writer` | 4 | Bias-audited JD, employer brand copy, distribution strategy |
+| `resume_screener` | 4 | Scorecard with rubric, calibration guide, bias interrupter checklist |
+| `interview_prep` | 4 | 12 STAR stories, technical prep, salary negotiation script |
+| `onboarding_plan` | 4 | Day 1 schedule, 90-day learning plan, success criteria |
+
+### DevOps & Infrastructure
+
+| Template | Agents | What it produces |
+|---|---|---|
+| `incident_postmortem` | 4 | Timeline reconstruction, 5-Whys RCA, blameless report |
+| `capacity_planning` | 4 | 12-month forecast, auto-scaling policies, cost optimization roadmap |
+| `migration_planner` | 4 | Migration strategy, risk matrix, rollback plan per phase |
+| `monitoring_setup` | 4 | SLI/SLO definitions, alert taxonomy, 4 dashboard specs |
+
+### Data Science
+
+| Template | Agents | What it produces |
+|---|---|---|
+| `dataset_explorer` | 4 | EDA report, 10 analytical hypotheses, Python code outline |
+| `ml_pipeline` | 4 | Feature engineering plan, algorithm selection, MLOps architecture |
+| `ab_test_analyzer` | 4 | Power analysis, statistical test selection, ship/no-ship framework |
+| `dashboard_builder` | 4 | KPI hierarchy, data model, wireframes, adoption plan |
+
+### Legal
+
+| Template | Agents | What it produces |
+|---|---|---|
+| `patent_analysis` | 4 | Patent landscape, FTO risk tiers, filing strategy |
+| `compliance_audit` | 4 | Gap analysis, evidence collection playbook, remediation roadmap |
+| `terms_of_service_generator` | 4 | ToS + Privacy Policy + Cookie Policy drafts |
+| `gdpr_assessment` | 4 | ROPA template, lawful basis audit, breach notification procedure |
+
+### Sales
+
+| Template | Agents | What it produces |
+|---|---|---|
+| `cold_outreach_sequence` | 4 | 5-touch email sequence, LinkedIn strategy, cold call scripts |
+| `deal_qualification` | 4 | MEDDIC assessment, pursuit recommendation, 30-day validation plan |
+| `proposal_generator` | 4 | Full proposal, ROI model, competitive battle cards |
+| `win_loss_analysis` | 4 | Interview guides, pattern analysis, competitive battle cards |
+
+### Customer Success
+
+| Template | Agents | What it produces |
+|---|---|---|
+| `churn_predictor` | 4 | Health score formula, intervention playbooks, win-back sequence |
+| `qbr_prep` | 4 | QBR agenda, ROI narrative, expansion opportunity plan |
+| `feature_request_aggregator` | 4 | RICE-scored feature inventory, product team briefing memo |
+| `onboarding_playbook` | 4 | Journey map, kickoff agenda, health metrics, email sequence |
+
+### Personal Productivity
+
+| Template | Agents | What it produces |
+|---|---|---|
+| `weekly_planner` | 4 | Weekly review, time-blocked schedule, obstacle if-then plans |
+| `meeting_prep` | 4 | Stakeholder profiles, key messages, follow-up email template |
+| `goal_tracker` | 4 | OKR framework, milestone map, accountability system |
+| `habit_builder` | 4 | Habit design, implementation intentions, recovery protocol |
+
+### Media & Journalism
+
+| Template | Agents | What it produces |
+|---|---|---|
+| `investigative_research` | 4 | Story hypothesis, source map, publication strategy |
+| `fact_checker` | 4 | Claim extraction, accuracy ratings, editor briefing memo |
+| `story_pitch` | 4 | 300-word pitch email, logline, editor objection responses |
+
+### Python API
+
+```python
+from crucible.templates import registry
+
+# List everything
+for template in registry.list_templates():
+    print(f"{template.name}: {template.description}")
+
+# Deploy a template
+session = registry.deploy_template(
+    "seo_article",
+    api_key="sk-ant-...",
+)
+
+# Preview the plan without running
+print(session.plan())
+
+# Run the full agent team
+results = await session.run(subject="Best practices for REST API design in 2026")
+
+# Results keyed by agent name
+for agent_name, data in results.items():
+    print(f"{agent_name}: {data['output'][:200]}")
+```
+
+---
+
 ## Roadmap
 
 - [ ] Streaming output (watch debates unfold in real-time)
@@ -313,6 +518,8 @@ Three convictions:
 - [ ] Debate replay and branching
 - [ ] Custom persona definitions
 - [ ] Agent Society Phase 2 (persistent identity, XP economy)
+- [ ] Template composer (combine templates into multi-stage pipelines)
+- [ ] Template versioning and community submissions
 
 ---
 
