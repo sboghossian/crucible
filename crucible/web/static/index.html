@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Crucible — Debate Viewer</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div id="app">
+
+    <!-- Header -->
+    <header class="header">
+      <div class="header-inner">
+        <a class="logo" href="#/" data-nav="/">
+          <span class="logo-icon">⚗</span>
+          <span class="logo-text">Crucible</span>
+        </a>
+        <nav class="nav">
+          <a class="nav-link" href="#/" data-nav="/">Debates</a>
+          <button class="btn btn-primary" id="btn-new-debate">+ New Debate</button>
+        </nav>
+      </div>
+    </header>
+
+    <!-- Main -->
+    <main class="main" id="view-root"></main>
+
+  </div>
+
+  <!-- Modal -->
+  <div class="modal-backdrop" id="modal-backdrop" hidden>
+    <div class="modal" id="modal">
+      <div class="modal-header">
+        <h2 class="modal-title" id="modal-title">New Debate</h2>
+        <button class="modal-close" id="modal-close">&times;</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Templates -->
+  <template id="tpl-debate-list">
+    <div class="view-debate-list">
+      <div class="view-header">
+        <h1>Debate History</h1>
+        <p class="subtitle">All recorded adversarial debate sessions</p>
+      </div>
+      <div class="debate-grid" id="debate-grid">
+        <div class="loading">Loading debates…</div>
+      </div>
+    </div>
+  </template>
+
+  <template id="tpl-debate-card">
+    <article class="debate-card" data-id="">
+      <div class="debate-card-header">
+        <span class="debate-date"></span>
+        <span class="winner-badge"></span>
+      </div>
+      <h3 class="debate-topic"></h3>
+      <div class="score-bars"></div>
+    </article>
+  </template>
+
+  <template id="tpl-debate-viewer">
+    <div class="view-debate-viewer">
+      <div class="viewer-header">
+        <button class="btn btn-ghost back-btn" data-nav="/">← All Debates</button>
+        <h1 class="viewer-topic"></h1>
+        <div class="viewer-meta">
+          <span class="viewer-date"></span>
+        </div>
+      </div>
+
+      <div class="viewer-winner-banner" id="winner-banner" hidden>
+        <div class="winner-crown">👑</div>
+        <div class="winner-info">
+          <span class="winner-label">Winner</span>
+          <span class="winner-name"></span>
+        </div>
+        <div class="winner-score-box">
+          <span class="winner-score"></span>
+          <span class="winner-score-denom">/10</span>
+        </div>
+      </div>
+
+      <div class="viewer-scores" id="viewer-scores" hidden>
+        <h2 class="section-title">Scores</h2>
+        <div class="score-chart" id="score-chart"></div>
+      </div>
+
+      <div class="viewer-rounds" id="viewer-rounds">
+        <div class="loading">Loading transcript…</div>
+      </div>
+    </div>
+  </template>
+
+  <template id="tpl-round">
+    <section class="round-section">
+      <div class="round-header">
+        <span class="round-label"></span>
+        <span class="round-desc"></span>
+      </div>
+      <div class="round-statements"></div>
+    </section>
+  </template>
+
+  <template id="tpl-statement">
+    <div class="statement">
+      <div class="statement-header">
+        <div class="persona-avatar"></div>
+        <div class="statement-meta">
+          <span class="persona-name"></span>
+          <span class="persona-role"></span>
+        </div>
+        <div class="statement-targets"></div>
+      </div>
+      <div class="statement-body"></div>
+    </div>
+  </template>
+
+  <template id="tpl-live-viewer">
+    <div class="view-debate-viewer live-view">
+      <div class="viewer-header">
+        <button class="btn btn-ghost back-btn" data-nav="/">← All Debates</button>
+        <h1 class="viewer-topic"></h1>
+        <div class="viewer-meta">
+          <span class="live-badge">● LIVE</span>
+        </div>
+      </div>
+      <div class="live-status" id="live-status">
+        <div class="live-spinner"></div>
+        <span id="live-status-text">Connecting…</span>
+      </div>
+      <div class="viewer-rounds" id="viewer-rounds"></div>
+    </div>
+  </template>
+
+  <template id="tpl-new-debate-form">
+    <form class="new-debate-form" id="new-debate-form">
+      <div class="form-group">
+        <label for="input-topic">Topic <span class="required">*</span></label>
+        <input
+          id="input-topic"
+          name="topic"
+          type="text"
+          class="form-input"
+          placeholder="e.g. Should we migrate to microservices?"
+          required
+        />
+      </div>
+      <div class="form-group">
+        <label for="input-context">Context</label>
+        <textarea
+          id="input-context"
+          name="context"
+          class="form-input"
+          rows="3"
+          placeholder="Background information for the debaters (optional)"
+        ></textarea>
+      </div>
+      <div class="form-group">
+        <label for="input-options">Options</label>
+        <input
+          id="input-options"
+          name="options"
+          type="text"
+          class="form-input"
+          placeholder="Option A, Option B, Option C (comma-separated)"
+        />
+        <span class="form-hint">Leave blank for open-ended debate</span>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" id="form-cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="form-submit">Start Debate</button>
+      </div>
+    </form>
+  </template>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

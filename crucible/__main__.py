@@ -124,6 +124,21 @@ Examples:
         help="Path to the SQLite memory database"
     )
 
+    # web subcommand
+    web_parser = subparsers.add_parser("web", help="Start the debate web UI")
+    web_parser.add_argument(
+        "--port", "-p", type=int, default=8420,
+        help="Port to listen on (default: 8420)"
+    )
+    web_parser.add_argument(
+        "--db", default=".crucible_memory.db",
+        help="Path to the SQLite memory database"
+    )
+    web_parser.add_argument(
+        "--no-browser", action="store_true",
+        help="Do not open browser automatically"
+    )
+
     # deploy subcommand
     deploy_parser = subparsers.add_parser(
         "deploy", help="Deploy a template as an agent team"
@@ -153,8 +168,8 @@ Examples:
         parser.print_help()
         sys.exit(0)
 
-    # templates, history, stats, and plugins don't need an API key
-    needs_api_key = args.command not in ("templates", "history", "stats", "plugins") and not (
+    # templates, history, stats, and web don't require an API key to start
+    needs_api_key = args.command not in ("templates", "history", "stats", "web") and not (
         args.command == "deploy" and getattr(args, "plan", False)
     )
 
@@ -189,8 +204,8 @@ async def _run(args: Any) -> None:
         await _cmd_deploy(args)
         return
 
-    if args.command == "plugins":
-        _cmd_plugins(args)
+    if args.command == "web":
+        await _cmd_web(args)
         return
 
     from .core.orchestrator import Orchestrator
@@ -503,48 +518,20 @@ def _cmd_stats(args: Any) -> None:
     console.print()
 
 
-def _cmd_plugins(args: Any) -> None:
-    from .plugins.registry import PluginRegistry
-    from .plugins.loader import PluginLoader
+async def _cmd_web(args: Any) -> None:
+    from .web.server import run_server
 
-    plugins_dir = getattr(args, "plugins_dir", None) or getattr(args, "plugins_command_plugins_dir", None)
-    # Support --plugins-dir on the subcommand itself
-    if hasattr(args, "plugins_dir") and args.plugins_dir:
-        loader = PluginLoader()
-        loader.load_from_directory(args.plugins_dir)
-        loader.load_from_entry_points()
+    port: int = getattr(args, "port", 8420)
+    db: str = getattr(args, "db", ".crucible_memory.db")
+    no_browser: bool = getattr(args, "no_browser", False)
+    api_key: str = getattr(args, "api_key", "") or ""
+    model: str = getattr(args, "model", "claude-opus-4-6")
 
-    sub = getattr(args, "plugins_command", None)
-    if sub == "list" or sub is None:
-        plugins = PluginRegistry.instance().list_plugins()
-        if not plugins:
-            console.print("[yellow]No plugins registered.[/yellow]")
-            console.print(
-                "\n[dim]Load plugins with:[/dim] "
-                "[green]crucible --plugins-dir ./my_plugins plugins list[/green]"
-            )
-            return
+    if not no_browser:
+        import threading, webbrowser
+        threading.Timer(0.8, lambda: webbrowser.open(f"http://localhost:{port}")).start()
 
-        table = Table(
-            title="Registered Plugins",
-            show_header=True,
-            header_style="bold magenta",
-            expand=True,
-        )
-        table.add_column("Name", style="cyan", no_wrap=True)
-        table.add_column("Version", no_wrap=True)
-        table.add_column("Source", no_wrap=True)
-        table.add_column("Description")
-
-        for p in sorted(plugins, key=lambda x: x.name):
-            table.add_row(p.name, p.version, p.source, p.description or "—")
-
-        console.print()
-        console.print(table)
-        console.print()
-    else:
-        console.print(f"[red]Unknown plugins command: {sub}[/red]")
-        sys.exit(1)
+    await run_server(port=port, api_key=api_key, model=model, db_path=db)
 
 
 if __name__ == "__main__":
